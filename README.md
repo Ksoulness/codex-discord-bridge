@@ -12,6 +12,8 @@ Codex stays on your computer. Discord is a deliberately constrained notification
 
 ## Features
 
+For a practical explanation of model selection, Queue vs. Steer, retracting queued messages, and why status indicators can lag, see the [capability archive](docs/codex-discord-capability-archive.md).
+
 - Mirror user messages, commentary, final answers, commands, file edits, and supported approval requests.
 - Show live task status with channel indicators: 🟡 in progress/reconnecting, 🔴 approval required or error, 🟢 completed/stopped, and ⚪ monitoring paused.
 - Mirror structured Codex plan progress into the task status, including the current step and total steps.

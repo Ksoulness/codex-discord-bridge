@@ -115,6 +115,25 @@ flowchart TD
 | Optional plain message | Controlled send entry point | One configured controller by default. |
 | Approval/plan controls | Respond to surfaced Codex requests | Exact, pending, and non-expired requests only. |
 
+### Everyday use: model, interrupt, queue, and retract
+
+These controls apply only to the Codex task mapped to the current Discord channel. They do not change the model of a running turn or send content to another task.
+
+| Goal | Discord action | What the bridge does | Limit |
+| --- | --- | --- | --- |
+| Choose a model for later turns | Run `/codex model`, choose a model privately, then choose reasoning effort if offered. Choose the Codex default to clear the channel preference. | Saves a local per-channel model/reasoning preference and attaches it to the next Discord-originated **new turn**. | A running turn is unchanged; only currently available Codex models and supported reasoning levels are selectable. |
+| Continue after current work | Use `/codex send` with `queue`, or the Queue control. | Stores the message locally, then submits it in FIFO order as the next user turn for the same task. | At most 10 pending messages per task; delivered messages cannot be retracted. |
+| Change the current direction now | Use `/codex send` with `steer`, or the Steer control. | Sends a steering message to a confirmed active turn. | It is neither a new turn nor forced cancellation; ambiguous, stale, or idle turns are rejected. |
+| Remove newest unsent message | Run `/codex retract`. | Removes the newest local `pending` queue record. | Does not affect sent, sending, or older entries. |
+
+Use **Queue** for the next task and **Steer** only when the current direction must change now. Steering depends on current Codex turn, Desktop IPC, and local event state; the bridge refuses rather than guessing an active target.
+
+### Why status indicators can lag
+
+Indicators show task state, not a Discord online signal. Codex must first emit a turn, plan, approval, completion, stop, or error event. The bridge then updates local state and status text; channel-name prefixes are coalesced and serialized to avoid rename limits and stale updates overwriting newer state. Text can therefore update before the prefix, and reconnects restore only confirmable state.
+
+🟡 means active or reconnecting state was observed; 🔴 means approval required or an error was observed; 🟢 means completion or stop was confirmed; ⚪ means monitoring is paused. A delayed indicator does not mean Discord can directly cancel the local task.
+
 ## Capabilities included in public v1
 
 1. Write-back to the original Codex task.
