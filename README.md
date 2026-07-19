@@ -6,6 +6,8 @@ Detailed documentation: [Capability archive](docs/codex-discord-capability-archi
 
 A local-first bridge that mirrors live Codex activity to Discord and routes supported approval and write-back actions back to the same locally running Codex task.
 
+The upstream original established the Codex-to-Discord synchronization foundation. This independently maintained version adds guarded direct dialogue from Discord back to the same Codex task, so an authorized controller can continue the conversation and ask Codex to modify the project.
+
 Codex stays on your computer. Discord is a deliberately constrained notification and control surface, not the source of truth.
 
 ## Features
@@ -173,6 +175,6 @@ Please report bugs and feature requests through GitHub Issues. Do not post token
 
 ## Project Origin, Credits, and License
 
-This project is an independently maintained derivative of [NathanZane/codex-mobile](https://github.com/NathanZane/codex-mobile), originally released by Natale and contributors. The upstream project is the source of the original implementation; this repository adds its own changes and documentation.
+This project is an independently maintained derivative of [NathanZane/codex-mobile](https://github.com/NathanZane/codex-mobile), originally released by Natale and contributors. The upstream original established the activity-synchronization implementation. This repository adds guarded direct Discord-to-Codex conversation for the same mapped task, enabling authorized users to continue the dialogue and request project changes, alongside its own documentation and safeguards.
 
 It remains available under the [MIT License](LICENSE). This derivative is maintained independently and is not affiliated with or endorsed by the upstream author.

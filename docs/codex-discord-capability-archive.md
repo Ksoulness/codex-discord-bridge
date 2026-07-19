@@ -10,6 +10,10 @@ Codex Discord Bridge is a local, controlled bridge that projects selected Codex 
 
 Codex remains the source of truth and execution environment. Discord is a constrained notification and control surface, not a second Codex client with arbitrary access.
 
+## Origin and extension
+
+The upstream original established the Codex-to-Discord activity synchronization foundation. This independently maintained version extends that foundation with guarded Discord-to-Codex dialogue for the same mapped task: an authorized controller can send a new task message, queue a next-turn message, or steer a confirmed active turn so Codex can continue the conversation and modify the project.
+
 ## What “sync” means
 
 | Category | Meaning |

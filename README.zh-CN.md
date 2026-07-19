@@ -6,6 +6,8 @@
 
 这是一个本地优先的桥接程序：它将 Codex 的实时活动同步到 Discord，并把受支持的审批和写回操作路由回同一台电脑上正在运行的 Codex 任务。
 
+上游原版建立了 Codex 到 Discord 的活动同步基础。本独立维护版本在此基础上增加了受控的 Discord → Codex 直接对话：经授权的控制者可继续同一任务的对话，并要求 Codex 修改项目。
+
 Codex 始终运行在你的电脑上。Discord 只是受到严格限制的通知与控制界面，不是事实来源。
 
 ## 功能
@@ -169,6 +171,6 @@ npm run coverage:gate
 
 ## 项目来源、致谢与许可证
 
-本项目是对上游 [NathanZane/codex-mobile](https://github.com/NathanZane/codex-mobile) 的独立维护二次开发版本。原始实现由 Natale 及贡献者发布；本仓库在此基础上加入了自己的修改和文档。
+本项目是对上游 [NathanZane/codex-mobile](https://github.com/NathanZane/codex-mobile) 的独立维护二次开发版本。原版由 Natale 及贡献者发布，并建立了活动同步实现；本仓库在此基础上增加了受控的 Discord → Codex 同任务直接对话，使经授权用户能够继续对话并请求修改项目，同时加入自己的文档与安全限制。
 
 项目继续采用 [MIT License](LICENSE)。本衍生版本由本仓库独立维护，不代表获得上游作者的认可或背书。
