@@ -13,11 +13,16 @@ Codex stays on your computer. Discord is a deliberately constrained notification
 ## Features
 
 - Mirror user messages, commentary, final answers, commands, file edits, and supported approval requests.
+- Show live task status with channel indicators: 🟡 in progress/reconnecting, 🔴 approval required or error, 🟢 completed/stopped, and ⚪ monitoring paused.
+- Mirror structured Codex plan progress into the task status, including the current step and total steps.
 - Respond to exact supported approvals and proposed-plan requests from Discord.
-- Send, queue, retract, or steer messages back to a mapped Codex conversation with `/codex` commands.
+- Continue the same mapped Codex task from Discord with `/codex send`; this is the direct dialogue path for asking Codex to modify the project.
+- Queue a message while a task is busy; it is delivered as the next task turn in order. Use `/codex retract` to remove the newest still-pending queued message.
+- Steer a confirmed active Codex turn to change its current direction without creating a separate task; ambiguous or stale active-turn state is rejected.
 - Optionally allow plain messages from one configured Discord controller user.
-- Select which projects and conversations to monitor; view supported sub-agent activity in Discord threads.
-- Keep local state in SQLite, redact common secret patterns, expire stale controls, and fail closed when state is ambiguous.
+- Select projects and conversations in a private management panel; pause, resume, or confirmation-clean their Discord mirrors, and view supported sub-agent activity in threads.
+- Hand supported Discord image attachments to the same Codex task with a Discord-CDN allowlist, format/count/size limits, and a seven-day local image-cache rotation.
+- Keep only necessary local SQLite state; bound retained turns, expire stale controls, redact common secret patterns, and fail closed when state is ambiguous.
 
 ## Limits and Safety
 
