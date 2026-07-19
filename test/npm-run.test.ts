@@ -164,10 +164,8 @@ test("npm-run execute runs build before coverage", () => {
     {
       command: "/node-bin",
       args: [
-        "--experimental-test-coverage",
-        "--test",
-        "--test-concurrency=1",
-        path.join(fakeRepo, "dist", "test", "*.test.js")
+        path.join(fakeRepo, "scripts", "run-tests.cjs"),
+        "--coverage"
       ],
       cwd: fakeRepo
     }
@@ -208,35 +206,33 @@ test("npm-run execute applies the core coverage gate when requested", () => {
     {
       command: "/node-bin",
       args: [
-        "--experimental-test-coverage",
-        "--test",
-        "--test-concurrency=1",
-        "--test-coverage-lines=80",
-        "--test-coverage-include",
+        path.join(fakeRepo, "scripts", "run-tests.cjs"),
+        "--coverage",
+        "--coverage-lines=80",
+        "--coverage-include",
         "dist/src/bridge/BridgeService.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/bridge/approval/*.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/bridge/artifacts/*.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/bridge/commands/*.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/bridge/events/subagentAttachment.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/bridge/runtime/*.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/codex/codexFsHelpers.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/config.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/platform.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/policy/*.js",
-        "--test-coverage-include",
+        "--coverage-include",
         "dist/src/store/StateStore.js",
-        "--test-coverage-include",
-        "scripts/npm-run.cjs",
-        path.join(fakeRepo, "dist", "test", "*.test.js")
+        "--coverage-include",
+        "scripts/npm-run.cjs"
       ],
       cwd: fakeRepo
     }
@@ -348,7 +344,7 @@ test("npm-run execute covers build-gated routes and short-circuits on build fail
     {
       action: "test",
       extraArgs: [] as string[],
-      expectedSecondArgs: ["--test", "--test-concurrency=1", path.join(fakeRepo, "dist", "test", "*.test.js")]
+      expectedSecondArgs: [path.join(fakeRepo, "scripts", "run-tests.cjs")]
     }
   ]) {
     const calls: Array<{ command: string; args: string[] }> = [];

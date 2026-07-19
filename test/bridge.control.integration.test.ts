@@ -399,6 +399,7 @@ test("session final answer clears stale active state so idle Discord send starts
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.ownerClientIdsByThread.set("thr_writeback_idle_1", "desktop-owner-client");
     assert.ok(discord.handlers);
 
     await (bridge as any).handleLocalSessionAgentMessage({
@@ -484,6 +485,7 @@ test("session turn-aborted envelope clears stale active state even when behind t
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.ownerClientIdsByThread.set("thr_writeback_aborted_1", "desktop-owner-client");
     assert.ok(discord.handlers);
 
     await (bridge as any).handleLocalSessionUserMessage({
@@ -890,6 +892,7 @@ test("session final answer drains one queued Discord write-back message", async 
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.ownerClientIdsByThread.set("thr_writeback_drain_1", "desktop-owner-client");
     assert.ok(discord.handlers);
 
     const queued = await discord.handlers.onSendCommand(
@@ -3321,7 +3324,7 @@ test("app-server command approvals for remote CLI threads do not route approval 
     threadName: "Remote CLI thread",
     lastStatusType: "active",
     channelKind: "conversation",
-    sourceKind: "app-server"
+    sourceKind: "cli-session"
   });
 
   try {
@@ -3619,6 +3622,7 @@ test("stale app-server approvals absent from a full-access Desktop thread are di
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.started = false;
     await bridge.handleServerRequest(request);
     const pending = store.findPendingApprovalByItem(
       threadId,
@@ -3628,6 +3632,7 @@ test("stale app-server approvals absent from a full-access Desktop thread are di
     assert.ok(pending);
     assert.equal(discord.approvalCards.length, 1);
 
+    desktopIpc.started = true;
     desktopIpc.conversationStates.set(threadId, {
       id: threadId,
       turns: [],
@@ -3696,9 +3701,11 @@ test("stale app-server approval replays without a Desktop conversation snapshot 
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.started = false;
     await bridge.handleServerRequest(request);
     assert.equal(discord.approvalCards.length, 1);
 
+    desktopIpc.started = true;
     await bridge.handleServerRequest(request);
 
     assert.equal(
@@ -3819,11 +3826,13 @@ test("restart-disabled stale Desktop approvals are reconciled without another ap
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.started = false;
     await bridge.handleServerRequest(request);
     await (bridge as any).rehydrateState();
     const restartDisabled = store.findPendingApprovalByRequestId("711");
     assert.ok(restartDisabled?.restartDisabledAt);
 
+    desktopIpc.started = true;
     desktopIpc.conversationStates.set(threadId, {
       id: threadId,
       turns: [],
@@ -4201,8 +4210,6 @@ test("desktop approval feedback reconstructs Desktop restore state from thread/r
     const originalSendCommandApprovalDecision = desktopIpc.sendCommandApprovalDecision.bind(desktopIpc);
     desktopIpc.sendCommandApprovalDecision = async (conversationId: string, requestId: string, decision: unknown) => {
       await originalSendCommandApprovalDecision(conversationId, requestId, decision);
-      desktopIpc.conversationStates.delete(conversationId);
-      desktopIpc.ownerClientIdsByThread.delete(conversationId);
     };
 
     desktopIpc.emit("requestUpserted", {
@@ -4502,7 +4509,7 @@ test("app-server cancel-only command approvals for remote CLI threads reject wit
     threadName: "Remote CLI feedback thread",
     lastStatusType: "active",
     channelKind: "conversation",
-    sourceKind: "app-server"
+    sourceKind: "cli-session"
   });
 
   try {
@@ -6251,6 +6258,7 @@ test("desktop request removal does not downgrade decision-sent approvals and lat
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.started = false;
 
     await bridge.handleServerRequest(request);
     const approval = store.findPendingApprovalByRequestId("1260");
@@ -6260,6 +6268,7 @@ test("desktop request removal does not downgrade decision-sent approvals and lat
     assert.equal(result.content, "");
     assert.equal(store.findPendingApprovalByRequestId("1260")?.status, "decisionSent");
 
+    desktopIpc.started = true;
     desktopIpc.emit("requestRemoved", {
       threadId: "thr_decision_sent_desktop_request",
       requestId: "1260",
@@ -6605,6 +6614,7 @@ test("subagent session-log shell placeholders do not downgrade actionable app-se
 
   try {
     await bridge.start({ skipDiscovery: true });
+    desktopIpc.started = false;
 
     await bridge.handleServerRequest({
       method: "item/commandExecution/requestApproval",
@@ -6629,6 +6639,7 @@ test("subagent session-log shell placeholders do not downgrade actionable app-se
     assert.deepEqual(firstApproval.availableDecisions, ["accept", "decline"]);
     assert.deepEqual(discord.approvalCards.at(-1)?.decisions, ["accept", "decline"]);
 
+    desktopIpc.started = true;
     tailer.setEvents("thr_child_subagent_approval_race", [
       {
         type: "shellApprovalRequested",
