@@ -165,7 +165,9 @@ test("npm-run execute runs build before coverage", () => {
       command: "/node-bin",
       args: [
         "--experimental-test-coverage",
-        path.join(fakeRepo, "dist", "test", "run.js")
+        "--test",
+        "--test-concurrency=1",
+        path.join(fakeRepo, "dist", "test", "*.test.js")
       ],
       cwd: fakeRepo
     }
@@ -207,6 +209,8 @@ test("npm-run execute applies the core coverage gate when requested", () => {
       command: "/node-bin",
       args: [
         "--experimental-test-coverage",
+        "--test",
+        "--test-concurrency=1",
         "--test-coverage-lines=80",
         "--test-coverage-include",
         "dist/src/bridge/BridgeService.js",
@@ -232,7 +236,7 @@ test("npm-run execute applies the core coverage gate when requested", () => {
         "dist/src/store/StateStore.js",
         "--test-coverage-include",
         "scripts/npm-run.cjs",
-        path.join(fakeRepo, "dist", "test", "run.js")
+        path.join(fakeRepo, "dist", "test", "*.test.js")
       ],
       cwd: fakeRepo
     }
@@ -344,7 +348,7 @@ test("npm-run execute covers build-gated routes and short-circuits on build fail
     {
       action: "test",
       extraArgs: [] as string[],
-      expectedSecondArgs: [path.join(fakeRepo, "dist", "test", "run.js")]
+      expectedSecondArgs: ["--test", "--test-concurrency=1", path.join(fakeRepo, "dist", "test", "*.test.js")]
     }
   ]) {
     const calls: Array<{ command: string; args: string[] }> = [];

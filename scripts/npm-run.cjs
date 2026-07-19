@@ -47,7 +47,7 @@ function execute(argv = process.argv.slice(2), options = {}) {
   const indexJs = path.join(repoRoot, "dist", "src", "index.js");
   const initJs = path.join(repoRoot, "dist", "src", "init.js");
   const doctorJs = path.join(repoRoot, "dist", "src", "doctor.js");
-  const testRunnerJs = path.join(repoRoot, "dist", "test", "run.js");
+  const testFileGlob = path.join(repoRoot, "dist", "test", "*.test.js");
   const e2eLiveJs = path.join(repoRoot, "scripts", "e2e-live.cjs");
   const tsconfigPath = path.join(repoRoot, "tsconfig.json");
   const coreCoverageIncludes = [
@@ -91,14 +91,14 @@ function execute(argv = process.argv.slice(2), options = {}) {
   }
 
   function runCoverage(mode = "report") {
-    const args = ["--experimental-test-coverage", "--test-concurrency=1"];
+    const args = ["--experimental-test-coverage", "--test", "--test-concurrency=1"];
     if (mode === "gate") {
       args.push("--test-coverage-lines=80");
       for (const include of coreCoverageIncludes) {
         args.push("--test-coverage-include", include);
       }
     }
-    args.push(testRunnerJs);
+    args.push(testFileGlob);
     return run(nodeBin, args);
   }
 
@@ -181,7 +181,7 @@ function execute(argv = process.argv.slice(2), options = {}) {
       if (buildCode !== 0) {
         return buildCode;
       }
-      return run(nodeBin, ["--test-concurrency=1", testRunnerJs]);
+      return run(nodeBin, ["--test", "--test-concurrency=1", testFileGlob]);
     }
     default:
       writeError(`Unknown action: ${action}`);
