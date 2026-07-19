@@ -9,6 +9,7 @@ A local-first bridge that mirrors live Codex activity to Discord and routes supp
 The upstream original established the Codex-to-Discord synchronization foundation. This independently maintained version adds guarded direct dialogue from Discord back to the same Codex task, so an authorized controller can continue the conversation and ask Codex to modify the project.
 
 Codex stays on your computer. Discord is a deliberately constrained notification and control surface, not the source of truth.
+<img width="1843" height="839" alt="github_safe_test" src="https://github.com/user-attachments/assets/41cb81a5-f08c-4343-bf42-e6a683609c13" />
 
 ## Features
 
