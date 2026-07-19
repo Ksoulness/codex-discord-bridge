@@ -91,7 +91,7 @@ function execute(argv = process.argv.slice(2), options = {}) {
   }
 
   function runCoverage(mode = "report") {
-    const args = ["--experimental-test-coverage"];
+    const args = ["--experimental-test-coverage", "--test-concurrency=1"];
     if (mode === "gate") {
       args.push("--test-coverage-lines=80");
       for (const include of coreCoverageIncludes) {
@@ -181,7 +181,7 @@ function execute(argv = process.argv.slice(2), options = {}) {
       if (buildCode !== 0) {
         return buildCode;
       }
-      return runNode(testRunnerJs);
+      return run(nodeBin, ["--test-concurrency=1", testRunnerJs]);
     }
     default:
       writeError(`Unknown action: ${action}`);
