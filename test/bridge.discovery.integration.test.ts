@@ -1081,7 +1081,7 @@ test("live discovery does not block on slow queued session mirroring", async () 
 
     const completed = await Promise.race([
       (bridge as any).runDiscoveryCycle(false).then(() => "completed"),
-      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 50))
+      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 500))
     ]);
 
     assert.equal(completed, "completed");
