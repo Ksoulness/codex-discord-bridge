@@ -207,6 +207,8 @@ export class DiscordProvider implements BridgeProvider {
   private interactionListenerAttached = false;
   private messageListenerAttached = false;
   private readonly startupSessions = new WeakMap<StartupTransportContext, DiscordStartupSession>();
+  private readonly statusPinCleanupKeys = new Set<string>();
+  private readonly channelMutationTails = new Map<string, Promise<void>>();
 
   constructor(
     private readonly config: {
@@ -645,17 +647,19 @@ export class DiscordProvider implements BridgeProvider {
   }
 
   async updateConversationChannelName(channelId: string, name: string): Promise<boolean> {
-    const channel = await this.fetchExistingChannelOrNull(
-      channelId,
-      "Discord conversation channel is missing while updating its task status."
-    );
-    if (channel?.type !== ChannelType.GuildText) {
-      return false;
-    }
-    if (channel.name !== name) {
-      await channel.setName(name, "Update Codex task status");
-    }
-    return true;
+    return this.runChannelMutation(channelId, async () => {
+      const channel = await this.fetchExistingChannelOrNull(
+        channelId,
+        "Discord conversation channel is missing while updating its task status."
+      );
+      if (channel?.type !== ChannelType.GuildText) {
+        return false;
+      }
+      if (channel.name !== name) {
+        await channel.setName(name, "Update Codex task status");
+      }
+      return true;
+    });
   }
 
   async ensureSubagentThread(
@@ -894,9 +898,7 @@ export class DiscordProvider implements BridgeProvider {
       try {
         const editStartedAt = startupTimingNow();
         await existing.edit({ content, allowedMentions: NO_ALLOWED_MENTIONS });
-        if (!existing.pinned) {
-          await this.tryPinMessage(existing, "Pin Codex live status");
-        }
+        await this.cleanupPinnedStatusCards(target, view);
         this.clearKnownEmptyStatusCardChannel(channelId, operationContext);
         this.rememberFetchedMessage(channelId, existing, operationContext);
         recordStartupWrite(operationContext, "status");
@@ -905,18 +907,22 @@ export class DiscordProvider implements BridgeProvider {
         );
         return existing.id;
       } catch (error) {
-        this.logger.warn({ error, channelId, messageId: existing.id }, "Failed to update existing status card.");
+        this.logger.warn(
+          { error, channelId, messageId: existing.id },
+          "Failed to update existing status card; refusing to create a duplicate."
+        );
+        throw error;
       }
     }
 
     const sendStartedAt = startupTimingNow();
     const created = await this.sendTargetMessage(target, { content, allowedMentions: NO_ALLOWED_MENTIONS });
-    await this.tryPinMessage(created, "Pin Codex live status");
+    await this.cleanupPinnedStatusCards(target, view);
     this.clearKnownEmptyStatusCardChannel(channelId, operationContext);
     this.rememberFetchedMessage(channelId, created, operationContext);
     recordStartupWrite(operationContext, "status");
     this.logStartupTiming(
-      `discord status-card channel=${channelId} mode=create lookup=${formatStartupTimingMs(lookupDurationMs)} send+pin=${formatStartupTimingMs(startupTimingNow() - sendStartedAt)} total=${formatStartupTimingMs(startupTimingNow() - startedAt)}`
+      `discord status-card channel=${channelId} mode=create lookup=${formatStartupTimingMs(lookupDurationMs)} send=${formatStartupTimingMs(startupTimingNow() - sendStartedAt)} total=${formatStartupTimingMs(startupTimingNow() - startedAt)}`
     );
     return created.id;
   }
@@ -1739,24 +1745,45 @@ export class DiscordProvider implements BridgeProvider {
     topic: string,
     codexThreadId: string
   ): Promise<void> {
-    const statusAwareDesiredName = preserveDiscordChannelStatusPrefix(channel.name, desiredName);
-    const updates: { name?: string; parent?: string; reason: string } = {
-      reason: `Sync Codex thread ${codexThreadId}`
-    };
-    if (channel.name !== statusAwareDesiredName) {
-      updates.name = statusAwareDesiredName;
-    }
-    if (channel.parentId !== categoryId) {
-      updates.parent = categoryId;
-    }
-    if (updates.name || updates.parent) {
-      await channel.edit({
-        ...updates,
-        topic
-      });
-    }
-    if (channel.topic !== topic) {
-      await channel.setTopic(topic, `Mark Codex thread ${codexThreadId} as bridge-managed`);
+    await this.runChannelMutation(channel.id, async () => {
+      const statusAwareDesiredName = preserveDiscordChannelStatusPrefix(channel.name, desiredName);
+      const updates: { name?: string; parent?: string; reason: string } = {
+        reason: `Sync Codex thread ${codexThreadId}`
+      };
+      if (channel.name !== statusAwareDesiredName) {
+        updates.name = statusAwareDesiredName;
+      }
+      if (channel.parentId !== categoryId) {
+        updates.parent = categoryId;
+      }
+      if (updates.name || updates.parent) {
+        await channel.edit({
+          ...updates,
+          topic
+        });
+      }
+      if (channel.topic !== topic) {
+        await channel.setTopic(topic, `Mark Codex thread ${codexThreadId} as bridge-managed`);
+      }
+    });
+  }
+
+  private async runChannelMutation<T>(channelId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.channelMutationTails.get(channelId) ?? Promise.resolve();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.channelMutationTails.set(channelId, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.channelMutationTails.get(channelId) === tail) {
+        this.channelMutationTails.delete(channelId);
+      }
     }
   }
 
@@ -2171,14 +2198,38 @@ export class DiscordProvider implements BridgeProvider {
     this.logger.info({ startupTiming: true }, message);
   }
 
-  private async tryPinMessage(
-    message: { id: string; pin(reason?: string): Promise<unknown> },
-    reason: string
-  ): Promise<void> {
+  private async cleanupPinnedStatusCards(target: BridgeTargetChannel, view: StatusCardView): Promise<void> {
+    const cleanupKey = `${target.id}:${view.shortThreadId}`;
+    if (this.statusPinCleanupKeys.has(cleanupKey)) {
+      return;
+    }
+
     try {
-      await message.pin(reason);
+      const pinned = await target.messages.fetchPins();
+      const matches = pinned.items
+        .map((item) => item.message)
+        .filter((message) => this.isStatusCardMessage(message, view));
+      const results = await Promise.all(
+        matches.map((message) => this.tryUnpinMessage(message, "Stop pinning Codex live status"))
+      );
+      if (results.every(Boolean)) {
+        this.statusPinCleanupKeys.add(cleanupKey);
+      }
     } catch (error) {
-      this.logger.warn({ error, messageId: message.id }, "Failed to pin Discord status message.");
+      this.logger.warn({ error, channelId: target.id }, "Failed to inspect pinned Discord status messages.");
+    }
+  }
+
+  private async tryUnpinMessage(
+    message: { id: string; unpin(reason?: string): Promise<unknown> },
+    reason: string
+  ): Promise<boolean> {
+    try {
+      await message.unpin(reason);
+      return true;
+    } catch (error) {
+      this.logger.warn({ error, messageId: message.id }, "Failed to unpin Discord status message.");
+      return false;
     }
   }
 

@@ -602,6 +602,69 @@ test("conversation status updates rename an existing Discord text channel", asyn
   assert.deepEqual(renamedTo, ["🟡-清理执行"]);
 });
 
+test("a delayed conversation metadata refresh cannot overwrite a newer yellow status", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  let releaseMetadataEdit: () => void = () => undefined;
+  let markMetadataEditStarted: () => void = () => undefined;
+  const metadataEditStarted = new Promise<void>((resolve) => {
+    markMetadataEditStarted = resolve;
+  });
+  const metadataEditReleased = new Promise<void>((resolve) => {
+    releaseMetadataEdit = resolve;
+  });
+  const channel = {
+    id: "channel-status-race",
+    type: ChannelType.GuildText,
+    name: "🟢-合并",
+    parentId: "category-1",
+    topic: "[codex-bridge] thread:thread-race",
+    edit: async (updates: { name?: string }) => {
+      markMetadataEditStarted();
+      await metadataEditReleased;
+      if (updates.name) {
+        channel.name = updates.name;
+      }
+    },
+    setName: async (name: string) => {
+      channel.name = name;
+    },
+    setTopic: async () => undefined
+  };
+  const internal = provider as unknown as {
+    fetchExistingChannelOrNull: () => Promise<typeof channel>;
+    syncConversationChannel: (
+      target: typeof channel,
+      desiredName: string,
+      categoryId: string,
+      topic: string,
+      codexThreadId: string
+    ) => Promise<void>;
+  };
+  internal.fetchExistingChannelOrNull = async () => channel;
+
+  const metadataRefresh = internal.syncConversationChannel(
+    channel,
+    "合并任务",
+    "category-1",
+    channel.topic,
+    "thread-race"
+  );
+  await metadataEditStarted;
+  const statusRefresh = provider.updateConversationChannelName("channel-status-race", "🟡-合并任务");
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseMetadataEdit();
+  await Promise.all([metadataRefresh, statusRefresh]);
+
+  assert.equal(channel.name, "🟡-合并任务");
+});
+
 test("inspectBridgeManagedLocations includes bridge-owned child threads with ids", async () => {
   const provider = new DiscordProvider(
     {
@@ -976,6 +1039,199 @@ test("findExistingStatusCard prefers a matching pinned card before scanning rece
 
   assert.equal(result?.id, "pinned-status");
   assert.equal(recentFetchCalled, false);
+});
+
+test("upsertStatusCard edits and unpins an existing status card without creating another message", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  Object.defineProperty((provider as unknown as { client: { user?: { id: string } } }).client, "user", {
+    value: { id: "bridge-bot" },
+    configurable: true
+  });
+  let editCalls = 0;
+  let unpinCalls = 0;
+  let sendCalls = 0;
+  const existing = {
+    id: "existing-status",
+    author: { id: "bridge-bot" },
+    content: "Thread: `019abcde`\nProject: repo\nLast activity: moments ago",
+    createdTimestamp: 20,
+    pinned: true,
+    edit: async () => {
+      editCalls += 1;
+      return existing;
+    },
+    unpin: async () => {
+      unpinCalls += 1;
+    }
+  };
+  const target = {
+    id: "status-channel",
+    messages: {
+      fetchPins: async () => ({ items: [{ message: existing }] })
+    }
+  };
+  const internal = provider as unknown as {
+    fetchWritableTargetChannel: () => Promise<typeof target>;
+    findExistingStatusCard: () => Promise<typeof existing>;
+    sendTargetMessage: () => Promise<typeof existing>;
+  };
+  internal.fetchWritableTargetChannel = async () => target;
+  internal.findExistingStatusCard = async () => existing;
+  internal.sendTargetMessage = async () => {
+    sendCalls += 1;
+    return existing;
+  };
+
+  const messageId = await provider.upsertStatusCard("status-channel", "existing-status", {
+    threadId: "019abcde-full",
+    title: "Test",
+    shortThreadId: "019abcde",
+    kindLabel: "Codex",
+    parentShortThreadId: null,
+    projectLabel: "repo",
+    statusLabel: "Completed",
+    attentionLabel: "",
+    workspaceLabel: "C:\\repo",
+    lastActivityAt: Date.now(),
+    latestCommandPreview: null,
+    latestAgentMessage: null
+  });
+
+  assert.equal(messageId, "existing-status");
+  assert.equal(editCalls, 1);
+  assert.equal(unpinCalls, 1);
+  assert.equal(sendCalls, 0);
+});
+
+test("upsertStatusCard unpins all historical status cards only once per channel and conversation", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  Object.defineProperty((provider as unknown as { client: { user?: { id: string } } }).client, "user", {
+    value: { id: "bridge-bot" },
+    configurable: true
+  });
+
+  const unpinCalls: string[] = [];
+  const createStatusCard = (id: string) => ({
+    id,
+    author: { id: "bridge-bot" },
+    content: "Thread: `019abcde`\nProject: repo\nLast activity: moments ago",
+    createdTimestamp: 20,
+    pinned: true,
+    edit: async () => undefined,
+    unpin: async () => {
+      unpinCalls.push(id);
+    }
+  });
+  const current = createStatusCard("current-status");
+  const duplicate = createStatusCard("duplicate-status");
+  let fetchPinsCalls = 0;
+  const target = {
+    id: "status-channel",
+    messages: {
+      fetchPins: async () => {
+        fetchPinsCalls += 1;
+        return { items: [{ message: current }, { message: duplicate }] };
+      }
+    }
+  };
+  const internal = provider as unknown as {
+    fetchWritableTargetChannel: () => Promise<typeof target>;
+    findExistingStatusCard: () => Promise<typeof current>;
+    sendTargetMessage: () => Promise<typeof current>;
+  };
+  internal.fetchWritableTargetChannel = async () => target;
+  internal.findExistingStatusCard = async () => current;
+  internal.sendTargetMessage = async () => current;
+  const view = {
+    threadId: "019abcde-full",
+    title: "Test",
+    shortThreadId: "019abcde",
+    kindLabel: "Codex",
+    parentShortThreadId: null,
+    projectLabel: "repo",
+    statusLabel: "Completed",
+    attentionLabel: "",
+    workspaceLabel: "C:\\repo",
+    lastActivityAt: Date.now(),
+    latestCommandPreview: null,
+    latestAgentMessage: null
+  };
+
+  await provider.upsertStatusCard("status-channel", "current-status", view);
+  await provider.upsertStatusCard("status-channel", "current-status", view);
+
+  assert.deepEqual(unpinCalls.sort(), ["current-status", "duplicate-status"]);
+  assert.equal(fetchPinsCalls, 1);
+});
+
+test("upsertStatusCard does not create a duplicate when editing the existing card fails", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  let sendCalls = 0;
+  const existing = {
+    id: "existing-status",
+    pinned: false,
+    edit: async () => {
+      throw new Error("Discord edit timeout");
+    },
+    unpin: async () => undefined
+  };
+  const target = {
+    id: "status-channel",
+    messages: {
+      fetchPins: async () => ({ items: [{ message: existing }] })
+    }
+  };
+  const internal = provider as unknown as {
+    fetchWritableTargetChannel: () => Promise<typeof target>;
+    findExistingStatusCard: () => Promise<typeof existing>;
+    sendTargetMessage: () => Promise<typeof existing>;
+  };
+  internal.fetchWritableTargetChannel = async () => target;
+  internal.findExistingStatusCard = async () => existing;
+  internal.sendTargetMessage = async () => {
+    sendCalls += 1;
+    return existing;
+  };
+
+  await assert.rejects(
+    provider.upsertStatusCard("status-channel", "existing-status", {
+      threadId: "019abcde-full",
+      title: "Test",
+      shortThreadId: "019abcde",
+      kindLabel: "Codex",
+      parentShortThreadId: null,
+      projectLabel: "repo",
+      statusLabel: "Completed",
+      attentionLabel: "",
+      workspaceLabel: "C:\\repo",
+      lastActivityAt: Date.now(),
+      latestCommandPreview: null,
+      latestAgentMessage: null
+    }),
+    /Discord edit timeout/
+  );
+  assert.equal(sendCalls, 0);
 });
 
 test("inspection mode starts without subscribing to Discord interactions", async () => {

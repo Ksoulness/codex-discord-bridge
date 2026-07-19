@@ -844,6 +844,96 @@ test("ProviderCommandCoordinator keeps a plain message queued when the original 
   assert.deepEqual(harness.startTurnCalls, []);
 });
 
+test("ProviderCommandCoordinator opens an idle original Desktop thread and waits for its owner before sending", async () => {
+  let ownerAvailable = false;
+  const desktopStarts: Array<{ threadId: string; params: Record<string, unknown> }> = [];
+  const harness = createHarness({
+    messageWriteBacks: {
+      allowFromDiscord: true,
+      allowPlainMessages: true,
+      allowedUserIds: ["user_1"]
+    },
+    desktopIpcClient: {
+      isReady: () => true,
+      canStartTurnInDesktopThread: () => ownerAvailable,
+      getConversationState: () => ({ threadRuntimeStatus: { type: "idle" }, turns: [] }),
+      waitForOwnerClientId: async () => {
+        ownerAvailable = true;
+        return "desktop-owner";
+      },
+      startTurn: async (threadId: string, params: Record<string, unknown>) => {
+        desktopStarts.push({ threadId, params });
+      }
+    }
+  });
+  harness.bridges.set("thread_owner_recovery", createBridge("thread_owner_recovery", "discord_owner_recovery"));
+  harness.runtime.threadState.set("thread_owner_recovery", {
+    status: { type: "idle" },
+    sourceKind: "app-server",
+    lastTurnId: null,
+    lastTurnStatus: null
+  } as never);
+
+  const result = await harness.coordinator.handlePlainMessage(
+    authorizedActor,
+    "discord_owner_recovery",
+    "message_owner_recovery",
+    "Resume the original Desktop conversation."
+  );
+
+  assert.equal(result, null);
+  assert.deepEqual(harness.openCodexThreadCalls, ["thread_owner_recovery"]);
+  assert.equal(harness.writeBackQueue[0]?.status, "sent");
+  assert.equal(desktopStarts.length, 1);
+});
+
+test("ProviderCommandCoordinator reopens an original Desktop thread after a stale owner rejects start-turn", async () => {
+  let ownerAvailable = true;
+  let startAttempts = 0;
+  const harness = createHarness({
+    messageWriteBacks: {
+      allowFromDiscord: true,
+      allowPlainMessages: true,
+      allowedUserIds: ["user_1"]
+    },
+    desktopIpcClient: {
+      isReady: () => true,
+      canStartTurnInDesktopThread: () => ownerAvailable,
+      getConversationState: () => ({ threadRuntimeStatus: { type: "idle" }, turns: [] }),
+      waitForOwnerClientId: async () => {
+        ownerAvailable = true;
+        return "replacement-owner";
+      },
+      startTurn: async () => {
+        startAttempts += 1;
+        if (startAttempts === 1) {
+          ownerAvailable = false;
+          throw new Error("no-client-found");
+        }
+      }
+    }
+  });
+  harness.bridges.set("thread_stale_owner", createBridge("thread_stale_owner", "discord_stale_owner"));
+  harness.runtime.threadState.set("thread_stale_owner", {
+    status: { type: "idle" },
+    sourceKind: "app-server",
+    lastTurnId: null,
+    lastTurnStatus: null
+  } as never);
+
+  const result = await harness.coordinator.handlePlainMessage(
+    authorizedActor,
+    "discord_stale_owner",
+    "message_stale_owner",
+    "Retry through the replacement Desktop owner."
+  );
+
+  assert.equal(result, null);
+  assert.deepEqual(harness.openCodexThreadCalls, ["thread_stale_owner"]);
+  assert.equal(startAttempts, 2);
+  assert.equal(harness.writeBackQueue[0]?.status, "sent");
+});
+
 test("ProviderCommandCoordinator queues a busy plain message with steer and retract controls", async () => {
   const harness = createHarness({
     messageWriteBacks: {
@@ -1976,9 +2066,9 @@ test("ProviderCommandCoordinator opens and waits for a Discord-created thread be
     desktopIpcClient: {
       isReady: () => true,
       canStartTurnInDesktopThread: () => desktopOwnsThread,
-      waitForConversationState: async () => {
+      waitForOwnerClientId: async () => {
         desktopOwnsThread = true;
-        return { turns: [] };
+        return "desktop-owner";
       },
       startTurn: async (conversationId: string, turnStartParams: Record<string, unknown>) => {
         desktopStartTurnCalls.push({ conversationId, turnStartParams });

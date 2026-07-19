@@ -201,6 +201,37 @@ export class CodexDesktopIpcClient extends EventEmitter {
     });
   }
 
+  async waitForOwnerClientId(threadId: string, timeoutMs = 5_000): Promise<string | null> {
+    const existing = this.getOwnerClientId(threadId);
+    if (existing) {
+      return existing;
+    }
+
+    return new Promise<string | null>((resolve) => {
+      let settled = false;
+      const finish = (ownerClientId: string | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        this.off("conversationStateChanged", handleConversationStateChanged);
+        resolve(ownerClientId);
+      };
+      const handleConversationStateChanged = (nextThreadId: string) => {
+        if (nextThreadId !== threadId) {
+          return;
+        }
+        const ownerClientId = this.getOwnerClientId(threadId);
+        if (ownerClientId) {
+          finish(ownerClientId);
+        }
+      };
+      const timer = setTimeout(() => finish(null), timeoutMs);
+      this.on("conversationStateChanged", handleConversationStateChanged);
+    });
+  }
+
   async sendCommandApprovalDecision(
     conversationId: string,
     requestId: string,

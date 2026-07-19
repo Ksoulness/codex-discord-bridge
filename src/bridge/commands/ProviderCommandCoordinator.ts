@@ -39,6 +39,7 @@ const DEFAULT_NEW_THREAD_REASONING_META_KEY = "discord-new-thread-default-reason
 const MAX_DISCORD_IMAGE_COUNT = 4;
 const MAX_DISCORD_IMAGE_BYTES = 8 * 1024 * 1024;
 const STALE_DESKTOP_ACTIVE_GRACE_MS = 2 * 60 * 1000;
+const DESKTOP_OWNER_RECOVERY_TIMEOUT_MS = 8_000;
 const STEER_ACTIVE_TURN_RETRY_DELAYS_MS = [250, 750, 1_500, 2_500];
 const DISCORD_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const DISCORD_IMAGE_HOSTS = new Set(["cdn.discordapp.com", "media.discordapp.net"]);
@@ -404,6 +405,16 @@ export class ProviderCommandCoordinator {
     }
 
     try {
+      if (this.isThreadSteerable(claimed.threadId)) {
+        if (
+          claimed.sourceKind === "plain" &&
+          !(await this.ensureOriginalDesktopOwner(claimed.threadId))
+        ) {
+          throw new DesktopOriginalThreadUnavailableError(
+            "The original Codex Desktop conversation is not connected or has no current Desktop owner."
+          );
+        }
+      }
       if (this.isThreadSteerable(claimed.threadId)) {
         const steeredTurnId = await this.steerResolvedThreadOrThrow(
           claimed.threadId,
@@ -1557,23 +1568,10 @@ export class ProviderCommandCoordinator {
     const bridgeRemoteThread =
       sourceKind === "app-server" && (await this.isBridgeRemoteCliThread(threadId));
     if (
-      bridgeRemoteThread &&
       record.sourceKind === "plain" &&
-      desktopIpcClient &&
-      typeof desktopIpcClient.isReady === "function" &&
-      desktopIpcClient.isReady() &&
-      typeof desktopIpcClient.canStartTurnInDesktopThread === "function" &&
-      !desktopIpcClient.canStartTurnInDesktopThread(threadId)
+      sourceKind !== "cli-session"
     ) {
-      try {
-        this.deps.openCodexThreadInDesktop(threadId);
-        await desktopIpcClient.waitForConversationState(threadId, 3_000);
-      } catch (error) {
-        this.context.logger.debug(
-          { error, threadId },
-          "Failed to connect the Discord-created thread to Codex Desktop. Continuing through app-server."
-        );
-      }
+      await this.ensureOriginalDesktopOwner(threadId);
     }
     if (
       sourceKind !== "cli-session" &&
@@ -1581,13 +1579,37 @@ export class ProviderCommandCoordinator {
       typeof desktopIpcClient.canStartTurnInDesktopThread === "function" &&
       desktopIpcClient.canStartTurnInDesktopThread(threadId)
     ) {
-      await desktopIpcClient.startTurn(threadId, {
+      const turnStartParams = {
         input: this.buildWriteBackInput(text, record.localImagePaths),
         attachments: [],
         ...(record.requestedModel ? { model: record.requestedModel } : {}),
         ...(record.requestedReasoningEffort ? { reasoningEffort: record.requestedReasoningEffort } : {})
-      });
-      return;
+      };
+      try {
+        await desktopIpcClient.startTurn(threadId, turnStartParams);
+        return;
+      } catch (error) {
+        if (record.sourceKind !== "plain" || !this.isNoClientFoundError(error)) {
+          throw error;
+        }
+        const ownerRecovered = await this.ensureOriginalDesktopOwner(threadId, true);
+        if (!ownerRecovered) {
+          throw new DesktopOriginalThreadUnavailableError(
+            "The original Codex Desktop conversation is not connected or has no current Desktop owner."
+          );
+        }
+        try {
+          await desktopIpcClient.startTurn(threadId, turnStartParams);
+          return;
+        } catch (retryError) {
+          if (this.isNoClientFoundError(retryError)) {
+            throw new DesktopOriginalThreadUnavailableError(
+              "The original Codex Desktop conversation is not connected or has no current Desktop owner."
+            );
+          }
+          throw retryError;
+        }
+      }
     }
 
     if (bridgeRemoteThread) {
@@ -1611,6 +1633,39 @@ export class ProviderCommandCoordinator {
       reasoningEffort: record.requestedReasoningEffort,
       localImagePaths: record.localImagePaths
     });
+  }
+
+  private async ensureOriginalDesktopOwner(threadId: string, forceOpen = false): Promise<boolean> {
+    const desktopIpcClient = this.context.desktopIpcClient;
+    if (
+      !desktopIpcClient ||
+      typeof desktopIpcClient.isReady !== "function" ||
+      !desktopIpcClient.isReady() ||
+      typeof desktopIpcClient.canStartTurnInDesktopThread !== "function"
+    ) {
+      return false;
+    }
+    if (!forceOpen && desktopIpcClient.canStartTurnInDesktopThread(threadId)) {
+      return true;
+    }
+
+    try {
+      this.deps.openCodexThreadInDesktop(threadId);
+      if (typeof desktopIpcClient.waitForOwnerClientId === "function") {
+        await desktopIpcClient.waitForOwnerClientId(threadId, DESKTOP_OWNER_RECOVERY_TIMEOUT_MS);
+      }
+    } catch (error) {
+      this.context.logger.debug(
+        { error, threadId },
+        "Failed to reopen the original Codex Desktop conversation for Discord write-back."
+      );
+    }
+    return desktopIpcClient.canStartTurnInDesktopThread(threadId);
+  }
+
+  private isNoClientFoundError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.toLowerCase().includes("no-client-found");
   }
 
   private async isBridgeRemoteCliThread(threadId: string): Promise<boolean> {

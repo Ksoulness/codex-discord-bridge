@@ -146,6 +146,19 @@ test("CodexDesktopIpcClient retries startTurn without a stale owner after no-cli
   assert.equal(internalClient.ownerClientIdsByThread.has("thread_stale_start_target"), false);
 });
 
+test("CodexDesktopIpcClient waits for a Desktop owner broadcast", async () => {
+  const { client } = createClientHarness();
+  const internalClient = client as unknown as {
+    ownerClientIdsByThread: Map<string, string>;
+  };
+
+  const ownerPromise = client.waitForOwnerClientId("thread_wait_owner", 1_000);
+  internalClient.ownerClientIdsByThread.set("thread_wait_owner", "desktop-client");
+  client.emit("conversationStateChanged", "thread_wait_owner", {});
+
+  assert.equal(await ownerPromise, "desktop-client");
+});
+
 test("CodexDesktopIpcClient only reports an original Desktop thread writable when connected and owned", () => {
   const { client } = createClientHarness();
   const internalClient = client as unknown as {
