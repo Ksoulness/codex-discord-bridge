@@ -773,7 +773,10 @@ test("ProviderCommandCoordinator starts an idle plain message silently with its 
     },
     modelPreference: "gpt-5.6-sol",
     desktopIpcClient: {
+      isReady: () => true,
+      isDesktopAvailable: () => true,
       canStartTurnInDesktopThread: () => true,
+      getConversationState: () => ({ threadRuntimeStatus: { type: "idle" }, turns: [] }),
       startTurn: async (threadId: string, params: Record<string, unknown>) => {
         desktopStarts.push({ threadId, params });
       }
@@ -805,10 +808,17 @@ test("ProviderCommandCoordinator starts an idle plain message silently with its 
   assert.equal(harness.writeBackQueue[0]?.status, "sent");
   assert.equal(harness.writeBackQueue[0]?.sourceKind, "plain");
   assert.equal(harness.writeBackQueue[0]?.discordMessageId, "message_idle");
+  assert.deepEqual(desktopStarts[0]?.params, {
+    input: [{ type: "text", text: "Continue from Discord." }],
+    attachments: [],
+    model: "gpt-5.6-sol",
+    approvalPolicy: "never",
+    sandboxPolicy: { type: "dangerFullAccess" }
+  });
   assert.equal(harness.writeBackQueue[0]?.requestedModel, "gpt-5.6-sol");
 });
 
-test("ProviderCommandCoordinator keeps a plain message queued when the original Desktop thread is unavailable", async () => {
+test("ProviderCommandCoordinator rejects a plain message without queueing when Codex Desktop is disconnected", async () => {
   const harness = createHarness({
     messageWriteBacks: {
       allowFromDiscord: true,
@@ -838,10 +848,79 @@ test("ProviderCommandCoordinator keeps a plain message queued when the original 
     "Keep this for the original Desktop thread."
   );
 
-  assert.match(result?.content ?? "", /原桌面对话暂时不可用/);
-  assert.equal(harness.writeBackQueue[0]?.status, "pending");
+  assert.match(result?.content ?? "", /Codex 已断线/);
+  assert.match(result?.content ?? "", /没有加入队列/);
+  assert.deepEqual(result?.buttons, undefined);
+  assert.deepEqual(harness.writeBackQueue, []);
   assert.deepEqual(harness.resumeThreadCalls, []);
   assert.deepEqual(harness.startTurnCalls, []);
+});
+
+test("ProviderCommandCoordinator never auto-sends a queued plain message after Desktop disconnects", async () => {
+  let phase: "active" | "idle" = "active";
+  let desktopAvailable = true;
+  let ownerAvailable = true;
+  const desktopStartTurnCalls: string[] = [];
+  const harness = createHarness({
+    messageWriteBacks: {
+      allowFromDiscord: true,
+      allowPlainMessages: true,
+      allowedUserIds: ["user_1"]
+    },
+    desktopIpcClient: {
+      isReady: () => true,
+      isDesktopAvailable: () => desktopAvailable,
+      canStartTurnInDesktopThread: () => ownerAvailable,
+      getConversationState: () => ({
+        threadRuntimeStatus: { type: phase },
+        turns: phase === "active" ? [{ turnId: "turn_disconnect_queue", status: "inProgress" }] : []
+      }),
+      startTurn: async (threadId: string) => {
+        desktopStartTurnCalls.push(threadId);
+      }
+    }
+  });
+  harness.bridges.set(
+    "thread_disconnect_queue",
+    createBridge("thread_disconnect_queue", "discord_disconnect_queue")
+  );
+  harness.runtime.threadState.set("thread_disconnect_queue", {
+    status: { type: "active" },
+    sourceKind: "app-server",
+    lastTurnId: "turn_disconnect_queue",
+    lastTurnStatus: "in_progress"
+  } as never);
+
+  const queued = await harness.coordinator.handlePlainMessage(
+    authorizedActor,
+    "discord_disconnect_queue",
+    "message_disconnect_queue",
+    "Do not send this after reconnect."
+  );
+  assert.match(queued?.content ?? "", /已排队/);
+  assert.equal(harness.writeBackQueue[0]?.status, "pending");
+
+  phase = "idle";
+  desktopAvailable = false;
+  ownerAvailable = false;
+  harness.runtime.threadState.set("thread_disconnect_queue", {
+    status: { type: "idle" },
+    sourceKind: "app-server",
+    lastTurnId: "turn_disconnect_queue",
+    lastTurnStatus: "completed"
+  } as never);
+  const disconnected = await harness.coordinator.drainNextQueuedWriteBackMessage("thread_disconnect_queue");
+
+  assert.equal(disconnected?.status, "failed");
+  assert.match(disconnected?.error ?? "", /Codex 已断线/);
+  assert.deepEqual(desktopStartTurnCalls, []);
+
+  desktopAvailable = true;
+  ownerAvailable = true;
+  const afterReconnect = await harness.coordinator.drainNextQueuedWriteBackMessage("thread_disconnect_queue");
+  assert.equal(afterReconnect, null);
+  assert.equal(harness.writeBackQueue[0]?.status, "failed");
+  assert.deepEqual(desktopStartTurnCalls, []);
 });
 
 test("ProviderCommandCoordinator opens an idle original Desktop thread and waits for its owner before sending", async () => {
@@ -940,6 +1019,10 @@ test("ProviderCommandCoordinator queues a busy plain message with steer and retr
       allowFromDiscord: true,
       allowPlainMessages: true,
       allowedUserIds: ["user_1"]
+    },
+    desktopIpcClient: {
+      isReady: () => true,
+      isDesktopAvailable: () => true
     }
   });
   harness.bridges.set("thread_plain_busy", createBridge("thread_plain_busy", "discord_plain_busy"));
@@ -1312,7 +1395,9 @@ test("ProviderCommandCoordinator sends a queued Discord message as a new turn wh
       threadId: "thread_direct_send",
       params: {
         input: [{ type: "text", text: "Start this immediately after the earlier turn ends." }],
-        attachments: []
+        attachments: [],
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" }
       }
     }
   ]);
@@ -1400,7 +1485,11 @@ test("a queued plain message keeps the model selected when it entered the queue"
       allowPlainMessages: true,
       allowedUserIds: ["user_1"]
     },
-    modelPreference: "gpt-5.6-sol"
+    modelPreference: "gpt-5.6-sol",
+    desktopIpcClient: {
+      isReady: () => true,
+      isDesktopAvailable: () => true
+    }
   });
   harness.bridges.set("thread_model_snapshot", createBridge("thread_model_snapshot", "discord_model_snapshot"));
   (harness.coordinator as unknown as { runtime: { threadState: Map<string, unknown> } }).runtime.threadState.set(
@@ -2047,7 +2136,9 @@ test("ProviderCommandCoordinator routes a Discord-created thread through Desktop
       conversationId: "thread_discord_created_owned",
       turnStartParams: {
         input: [{ type: "text", text: "Continue in the visible Desktop thread." }],
-        attachments: []
+        attachments: [],
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" }
       }
     }
   ]);
@@ -2118,7 +2209,9 @@ test("ProviderCommandCoordinator opens and waits for a Discord-created thread be
       conversationId: "thread_discord_created_unclaimed",
       turnStartParams: {
         input: [{ type: "text", text: "Show this turn in Codex Desktop." }],
-        attachments: []
+        attachments: [],
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" }
       }
     }
   ]);
@@ -2331,7 +2424,9 @@ test("ProviderCommandCoordinator starts a new turn when Desktop reports the queu
       threadId: "thread_stale_busy",
       params: {
         input: [{ type: "text", text: "Guide the turn that is about to appear." }],
-        attachments: []
+        attachments: [],
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" }
       }
     }
   ]);

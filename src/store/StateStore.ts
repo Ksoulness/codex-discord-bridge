@@ -244,9 +244,11 @@ export class StateStore {
         project_key TEXT NOT NULL,
         thread_name TEXT,
         thread_status TEXT NOT NULL DEFAULT 'idle',
+        available INTEGER NOT NULL DEFAULT 1,
         selected INTEGER NOT NULL DEFAULT 0,
         paused_discord_channel_id TEXT,
         last_seen_at TEXT NOT NULL,
+        recency_at TEXT NOT NULL,
         updated_by TEXT,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (project_key) REFERENCES monitor_projects(project_key) ON DELETE CASCADE
@@ -344,6 +346,15 @@ export class StateStore {
         `ALTER TABLE monitor_threads ADD COLUMN thread_status TEXT NOT NULL DEFAULT 'idle'`
       );
     }
+    if (!monitorThreadColumns.some((column) => String(column.name) === "recency_at")) {
+      this.database.exec(`ALTER TABLE monitor_threads ADD COLUMN recency_at TEXT`);
+      this.database.exec(`UPDATE monitor_threads SET recency_at = last_seen_at WHERE recency_at IS NULL`);
+    }
+    if (!monitorThreadColumns.some((column) => String(column.name) === "available")) {
+      this.database.exec(
+        `ALTER TABLE monitor_threads ADD COLUMN available INTEGER NOT NULL DEFAULT 1`
+      );
+    }
 
     const writeBackQueueColumns = this.database
       .prepare(`PRAGMA table_info(write_back_queue)`)
@@ -405,6 +416,7 @@ export class StateStore {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_projects_token ON monitor_projects(project_token);
       CREATE INDEX IF NOT EXISTS idx_monitor_projects_enabled ON monitor_projects(enabled, project_name);
       CREATE INDEX IF NOT EXISTS idx_monitor_threads_project ON monitor_threads(project_key, selected, last_seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_monitor_threads_recency ON monitor_threads(project_key, recency_at DESC);
       CREATE INDEX IF NOT EXISTS idx_monitor_threads_paused_channel ON monitor_threads(paused_discord_channel_id);
       CREATE INDEX IF NOT EXISTS idx_monitor_cleanup_requests_expires ON monitor_cleanup_requests(expires_at);
       CREATE INDEX IF NOT EXISTS idx_monitor_audit_timestamp ON monitor_audit_log(timestamp DESC);
@@ -648,6 +660,7 @@ export class StateStore {
     threadName: string | null;
     threadStatus?: "active" | "idle" | "notLoaded" | "systemError";
     lastSeenAt: string;
+    recencyAt?: string;
   }): void {
     const now = new Date().toISOString();
     const transaction = this.database.transaction(() => {
@@ -669,14 +682,16 @@ export class StateStore {
       this.database
         .prepare(`
           INSERT INTO monitor_threads (
-            thread_id, project_key, thread_name, thread_status, selected,
-            paused_discord_channel_id, last_seen_at, updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, 0, NULL, ?, NULL, ?)
+            thread_id, project_key, thread_name, thread_status, available, selected,
+            paused_discord_channel_id, last_seen_at, recency_at, updated_by, updated_at
+          ) VALUES (?, ?, ?, ?, 1, 0, NULL, ?, ?, NULL, ?)
           ON CONFLICT(thread_id) DO UPDATE SET
             project_key = excluded.project_key,
             thread_name = COALESCE(excluded.thread_name, monitor_threads.thread_name),
             thread_status = excluded.thread_status,
+            available = 1,
             last_seen_at = excluded.last_seen_at,
+            recency_at = excluded.recency_at,
             updated_at = excluded.updated_at
         `)
         .run(
@@ -685,8 +700,22 @@ export class StateStore {
           input.threadName,
           input.threadStatus ?? "idle",
           input.lastSeenAt,
+          input.recencyAt ?? input.lastSeenAt,
           now
         );
+    });
+    transaction();
+  }
+
+  markMonitorThreadsUnavailableExcept(threadIds: Iterable<string>): void {
+    const transaction = this.database.transaction(() => {
+      this.database.prepare(`UPDATE monitor_threads SET available = 0`).run();
+      const markAvailable = this.database.prepare(
+        `UPDATE monitor_threads SET available = 1 WHERE thread_id = ?`
+      );
+      for (const threadId of new Set(threadIds)) {
+        markAvailable.run(threadId);
+      }
     });
     transaction();
   }
@@ -739,14 +768,14 @@ export class StateStore {
         `
           SELECT * FROM monitor_threads
           WHERE project_key = ?
-          ORDER BY last_seen_at DESC, thread_id
+          ORDER BY recency_at DESC, thread_id
         `,
         [projectKey],
         (row) => this.mapMonitorThread(row)
       );
     }
     return this.selectMany(
-      `SELECT * FROM monitor_threads ORDER BY last_seen_at DESC, thread_id`,
+      `SELECT * FROM monitor_threads ORDER BY recency_at DESC, thread_id`,
       [],
       (row) => this.mapMonitorThread(row)
     );
@@ -2319,11 +2348,13 @@ export class StateStore {
         row.thread_status === "active" || row.thread_status === "notLoaded" || row.thread_status === "systemError"
           ? row.thread_status
           : "idle",
+      available: Number(row.available ?? 1) === 1,
       selected: Number(row.selected) === 1,
       pausedDiscordChannelId: row.paused_discord_channel_id
         ? String(row.paused_discord_channel_id)
         : null,
       lastSeenAt: String(row.last_seen_at),
+      recencyAt: row.recency_at ? String(row.recency_at) : String(row.last_seen_at),
       updatedBy: row.updated_by ? String(row.updated_by) : null,
       updatedAt: String(row.updated_at)
     };

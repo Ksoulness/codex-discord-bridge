@@ -579,6 +579,24 @@ test("startup reconciliation restores active and completed turn states", async (
   completed.stateStore.close();
 });
 
+test("periodic status refresh rechecks the channel light without rewriting unchanged status text", async () => {
+  const harness = createHarness({
+    lastTurnId: "turn-1",
+    lastTurnStatus: "completed",
+    channelRenameDelayMs: 0
+  });
+  await harness.coordinator.reconcileStartup();
+  const liveTextCount = harness.liveTextCalls.length;
+  const channelNameCount = harness.channelNameCalls.length;
+
+  await harness.coordinator.refreshCurrentStatuses();
+
+  assert.equal(harness.liveTextCalls.length, liveTextCount);
+  assert.equal(harness.channelNameCalls.length, channelNameCount + 1);
+  assert.equal(harness.channelNameCalls.at(-1)?.name, "🟢-thread-1");
+  harness.stateStore.close();
+});
+
 test("startup reconciliation does not downgrade a previously completed structured plan", async () => {
   const harness = createHarness({ lastTurnId: "turn-1", lastTurnStatus: "completed" });
   harness.stateStore.upsertTurnStatusMessage({

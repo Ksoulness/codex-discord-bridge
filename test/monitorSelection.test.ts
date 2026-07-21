@@ -134,6 +134,30 @@ test("active picker window can be changed and survives a service restart", () =>
   fixture.store.close();
 });
 
+test("automatic management settings default to 5 by 5 and persist", () => {
+  const fixture = createFixture();
+
+  assert.deepEqual(fixture.service.getManagementSettings(), {
+    mode: "manual",
+    projectLimit: 5,
+    threadLimit: 5
+  });
+  assert.deepEqual(fixture.service.setAutomaticSettings(7, 3), {
+    mode: "automatic",
+    projectLimit: 7,
+    threadLimit: 3
+  });
+  assert.deepEqual(new MonitorSelectionService(fixture.store).getManagementSettings(), {
+    mode: "automatic",
+    projectLimit: 7,
+    threadLimit: 3
+  });
+  assert.equal(fixture.service.setManualMode().mode, "manual");
+  assert.throws(() => fixture.service.setAutomaticSettings(0, 5), /project limit/i);
+  assert.throws(() => fixture.service.setAutomaticSettings(5, 21), /conversation limit/i);
+  fixture.store.close();
+});
+
 test("project identity applies the configured prefix consistently", () => {
   assert.deepEqual(
     resolveProjectIdentity({
@@ -144,6 +168,19 @@ test("project identity applies the configured prefix consistently", () => {
     {
       projectKey: "e2e run::c:\\repo",
       projectName: "E2E Run Repo"
+    }
+  );
+});
+
+test("Codex generated no-project workspaces use a stable Chinese category name", () => {
+  assert.deepEqual(
+    resolveProjectIdentity({
+      cwd: "C:\\Users\\Administrator\\Documents\\Codex\\2026-07-19\\w",
+      repoName: "w"
+    }),
+    {
+      projectKey: "c:\\users\\administrator\\documents\\codex\\2026-07-19\\w",
+      projectName: "无项目对话"
     }
   );
 });

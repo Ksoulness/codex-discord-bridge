@@ -106,6 +106,7 @@ const NOOP_SESSION_EVENT_TAILER = {
 } as unknown as CodexSessionEventTailer;
 
 const BRIDGE_STARTUP_READY_META_KEY = "bridge_startup_ready_at";
+const MONITOR_FULL_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 export class BridgeService {
   private readonly options: ResolvedBridgeServiceOptions;
@@ -114,6 +115,7 @@ export class BridgeService {
   private readonly coordinators: BridgeCoordinatorGraph;
   private sessionPollTimer: NodeJS.Timeout | null = null;
   private sessionPollPromise: Promise<void> | null = null;
+  private monitorRefreshTimer: NodeJS.Timeout | null = null;
 
   constructor(options: BridgeServiceOptions) {
     this.options = {
@@ -170,6 +172,17 @@ export class BridgeService {
     });
     this.options.desktopIpcClient?.on("ready", () => {
       void this.coordinators.approvalCoordinator.reconcileStaleDesktopApprovals();
+      void this.refreshDesktopConnectionStatus(false);
+    });
+    this.options.desktopIpcClient?.on("availabilityChanged", (available) => {
+      if (!this.stopping) {
+        void this.coordinators.turnStatusCoordinator.setDesktopConnectionStatus(available);
+      }
+    });
+    this.options.desktopIpcClient?.on("exited", () => {
+      if (!this.stopping) {
+        void this.coordinators.turnStatusCoordinator.setDesktopConnectionStatus(false);
+      }
     });
   }
 
@@ -213,6 +226,12 @@ export class BridgeService {
         this.coordinators.monitorManagementCoordinator.handleButton(actor, customId),
       onMonitorSelect: async (actor, customId, values) =>
         this.coordinators.monitorManagementCoordinator.handleSelect(actor, customId, values),
+      onMonitorAutomaticSettings: async (actor, projectLimit, threadLimit) =>
+        this.coordinators.monitorManagementCoordinator.handleAutomaticSettings(
+          actor,
+          projectLimit,
+          threadLimit
+        ),
       onApprovalDetails: async (actor, token) => this.handleApprovalDetails(actor, token),
       onApprovalAction: async (actor, token, decision) =>
         this.handleApprovalAction(actor, token, decision),
@@ -248,6 +267,9 @@ export class BridgeService {
         const detail = error instanceof Error ? error.message : "Desktop approvals will stay local.";
         this.coordinators.mirrorStateCoordinator.printProgress(`Codex Desktop IPC is unavailable. ${detail}`);
       }
+      await this.coordinators.turnStatusCoordinator.setDesktopConnectionStatus(
+        this.isDesktopAvailable(this.options.desktopIpcClient)
+      );
     }
     if (!startOptions.skipRehydrate) {
       await this.rehydrateState();
@@ -256,6 +278,11 @@ export class BridgeService {
       }
     }
     if (!startOptions.skipDiscovery) {
+      if (
+        this.coordinators.monitorSelectionService.getManagementSettings().mode === "automatic"
+      ) {
+        await this.reconcileAutomaticMonitoringSafely();
+      }
       this.coordinators.mirrorStateCoordinator.printProgress(
         this.runtime.isColdStart
           ? "Cold start detected. Initial import is limited to 25 threads active in the last 12 hours."
@@ -273,6 +300,7 @@ export class BridgeService {
     }
     await this.coordinators.turnStatusCoordinator.reconcileStartup();
     this.startSessionPolling();
+    this.startMonitorRefreshScheduler();
     this.options.stateStore.setBridgeMetaValue(BRIDGE_STARTUP_READY_META_KEY, new Date().toISOString());
   }
 
@@ -314,6 +342,57 @@ export class BridgeService {
       clearInterval(this.sessionPollTimer);
       this.sessionPollTimer = null;
     }
+    if (this.monitorRefreshTimer) {
+      clearInterval(this.monitorRefreshTimer);
+      this.monitorRefreshTimer = null;
+    }
+  }
+
+  private startMonitorRefreshScheduler(): void {
+    if (this.monitorRefreshTimer) {
+      return;
+    }
+    this.monitorRefreshTimer = setInterval(() => {
+      void this.runScheduledMonitorRefresh();
+    }, MONITOR_FULL_REFRESH_INTERVAL_MS);
+    this.monitorRefreshTimer.unref?.();
+    this.coordinators.mirrorStateCoordinator.printProgress(
+      "Full monitor refresh scheduled every 10 minutes; manual refresh does not reset the timer."
+    );
+  }
+
+  private async runScheduledMonitorRefresh(): Promise<void> {
+    await this.refreshDesktopConnectionStatus(true);
+    this.coordinators.monitorManagementCoordinator.requestFullRefresh();
+  }
+
+  private async refreshDesktopConnectionStatus(reconnect: boolean): Promise<void> {
+    const desktopIpcClient = this.options.desktopIpcClient;
+    if (!desktopIpcClient) {
+      return;
+    }
+    if (reconnect && !desktopIpcClient.isReady()) {
+      try {
+        await desktopIpcClient.start();
+      } catch (error) {
+        this.options.logger.debug(
+          { error },
+          "Scheduled monitor refresh could not reconnect to Codex Desktop IPC."
+        );
+      }
+    }
+    await this.coordinators.turnStatusCoordinator.setDesktopConnectionStatus(
+      this.isDesktopAvailable(desktopIpcClient)
+    );
+  }
+
+  private isDesktopAvailable(desktopIpcClient: CodexDesktopIpcClient): boolean {
+    const availabilityCheck = (
+      desktopIpcClient as CodexDesktopIpcClient & { isDesktopAvailable?: () => boolean }
+    ).isDesktopAvailable;
+    return typeof availabilityCheck === "function"
+      ? availabilityCheck.call(desktopIpcClient)
+      : desktopIpcClient.isReady();
   }
 
   private startSessionPolling(): void {
@@ -500,9 +579,32 @@ export class BridgeService {
       return;
     }
     await this.coordinators.discoveryCoordinator.runDiscoveryCycle(isStartup);
+    if (isStartup) {
+      await this.reconcileAutomaticMonitoringSafely();
+    }
     await this.coordinators.approvalCoordinator.reconcileStaleDesktopApprovals();
     await this.coordinators.providerCommandCoordinator.reconcileStaleDesktopStatuses();
     await this.reconcileMonitorPanelSafely();
+  }
+
+  private async reconcileAutomaticMonitoringSafely(): Promise<void> {
+    try {
+      const result = await this.coordinators.automaticMonitorCoordinator.reconcile();
+      if (result.errors.length > 0) {
+        this.options.logger.warn(
+          { errors: result.errors.slice(0, 10), errorCount: result.errors.length },
+          "Automatic monitor reconciliation completed with conversation errors."
+        );
+      }
+    } catch (error) {
+      this.options.logger.warn(
+        { error },
+        "Failed to reconcile automatic monitoring. Discovery polling will retry."
+      );
+      this.coordinators.mirrorStateCoordinator.printProgress(
+        "Automatic monitor update failed; the next discovery poll will retry."
+      );
+    }
   }
 
   private async reconcileMonitorPanelSafely(): Promise<void> {
@@ -778,3 +880,4 @@ export class BridgeService {
     );
   }
 }
+

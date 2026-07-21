@@ -34,6 +34,7 @@ import { ThreadHydrator } from "./discovery/ThreadHydrator.js";
 import { MonitorSelectionService } from "./monitoring/MonitorSelectionService.js";
 import { MonitorLifecycleCoordinator } from "./monitoring/MonitorLifecycleCoordinator.js";
 import { MonitorManagementCoordinator } from "./monitoring/MonitorManagementCoordinator.js";
+import { AutomaticMonitorCoordinator } from "./monitoring/AutomaticMonitorCoordinator.js";
 import { MirrorCandidateExtractor } from "./mirror/MirrorCandidateExtractor.js";
 import { MirrorPublisher } from "./mirror/MirrorPublisher.js";
 import { MirrorStateCoordinator } from "./mirror/MirrorStateCoordinator.js";
@@ -56,6 +57,7 @@ export interface BridgeCoordinatorGraph {
   readonly threadHydrator: ThreadHydrator;
   readonly monitorSelectionService: MonitorSelectionService;
   readonly monitorLifecycleCoordinator: MonitorLifecycleCoordinator;
+  readonly automaticMonitorCoordinator: AutomaticMonitorCoordinator;
   readonly monitorManagementCoordinator: MonitorManagementCoordinator;
   readonly discoveryCoordinator: DiscoveryCoordinator;
   readonly mirrorCandidateExtractor: MirrorCandidateExtractor;
@@ -108,6 +110,7 @@ export function createBridgeCoordinatorGraph(
   let notificationRouter: NotificationRouter;
   let cleanupCoordinator: CleanupCoordinator;
   let monitorLifecycleCoordinator: MonitorLifecycleCoordinator;
+  let automaticMonitorCoordinator: AutomaticMonitorCoordinator;
   let monitorManagementCoordinator: MonitorManagementCoordinator;
   let providerCommandCoordinator: ProviderCommandCoordinator;
   let discordPlainMessageCoordinator: DiscordPlainMessageCoordinator;
@@ -556,6 +559,12 @@ export function createBridgeCoordinatorGraph(
       tryReadThread: (threadId) => mirrorStateCoordinator.tryReadThread(threadId)
     }
   );
+  automaticMonitorCoordinator = new AutomaticMonitorCoordinator(
+    runtimeContext.stateStore,
+    runtimeContext.provider,
+    monitorSelectionService,
+    monitorLifecycleCoordinator
+  );
   monitorManagementCoordinator = new MonitorManagementCoordinator(
     runtimeContext.stateStore,
     runtimeContext.policy,
@@ -564,7 +573,26 @@ export function createBridgeCoordinatorGraph(
     monitorLifecycleCoordinator,
     runtimeContext.runtimeConfig.approvals.allowedUserIds[0] ?? null,
     () => discoveryCoordinator.refreshMonitorInventoryNow(),
-    () => runtimeContext.codexAdapter.listModels({ timeoutMs: 4_000 })
+    () => runtimeContext.codexAdapter.listModels({ timeoutMs: 4_000 }),
+    automaticMonitorCoordinator,
+    async () => {
+      await discoveryCoordinator.runDiscoveryCycle(false);
+      await discoveryCoordinator.refreshMappedThreadsNow();
+      for (const bridge of runtimeContext.stateStore.listThreadBridges()) {
+        try {
+          await mirrorSyncCoordinator.flushMessageSync(bridge.codexThreadId);
+          if (bridge.channelKind === "conversation") {
+            await statusCoordinator.flushStatusUpdate(bridge.codexThreadId, { force: true });
+          }
+        } catch (error) {
+          runtimeContext.logger.warn(
+            { error, threadId: bridge.codexThreadId },
+            "Full monitor refresh could not refresh one mapped conversation."
+          );
+        }
+      }
+      await turnStatusCoordinator.refreshCurrentStatuses();
+    }
   );
   providerCommandCoordinator = new ProviderCommandCoordinator(runtimeContext, runtime, {
     clearQueuedStatusUpdate: (threadId) => statusCoordinator.clearQueuedStatusUpdate(threadId),
@@ -607,6 +635,7 @@ export function createBridgeCoordinatorGraph(
     threadHydrator,
     monitorSelectionService,
     monitorLifecycleCoordinator,
+    automaticMonitorCoordinator,
     monitorManagementCoordinator,
     discoveryCoordinator,
     mirrorCandidateExtractor,

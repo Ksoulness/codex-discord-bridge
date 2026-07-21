@@ -20,3 +20,4 @@ export function formatStartupTimingMs(durationMs: number): string {
   }
   return `${durationMs.toFixed(1)}ms`;
 }
+

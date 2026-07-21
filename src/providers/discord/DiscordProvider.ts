@@ -897,13 +897,16 @@ export class DiscordProvider implements BridgeProvider {
     if (existing) {
       try {
         const editStartedAt = startupTimingNow();
-        await existing.edit({ content, allowedMentions: NO_ALLOWED_MENTIONS });
+        const changed = existing.content !== content;
+        if (changed) {
+          await existing.edit({ content, allowedMentions: NO_ALLOWED_MENTIONS });
+          recordStartupWrite(operationContext, "status");
+        }
         await this.cleanupPinnedStatusCards(target, view);
         this.clearKnownEmptyStatusCardChannel(channelId, operationContext);
         this.rememberFetchedMessage(channelId, existing, operationContext);
-        recordStartupWrite(operationContext, "status");
         this.logStartupTiming(
-          `discord status-card channel=${channelId} mode=edit lookup=${formatStartupTimingMs(lookupDurationMs)} edit=${formatStartupTimingMs(startupTimingNow() - editStartedAt)} total=${formatStartupTimingMs(startupTimingNow() - startedAt)}`
+          `discord status-card channel=${channelId} mode=${changed ? "edit" : "unchanged"} lookup=${formatStartupTimingMs(lookupDurationMs)} edit=${formatStartupTimingMs(startupTimingNow() - editStartedAt)} total=${formatStartupTimingMs(startupTimingNow() - startedAt)}`
         );
         return existing.id;
       } catch (error) {
@@ -1260,6 +1263,15 @@ export class DiscordProvider implements BridgeProvider {
     const actor = this.extractActor(interaction);
     let result: DiscordCommandResult;
     if (action === "monitor") {
+      if (token === "auto-settings") {
+        const projectLimit = Number(decisionParts[0] ?? "5");
+        const threadLimit = Number(decisionParts[1] ?? "5");
+        await interaction.showModal(this.buildMonitorAutomaticSettingsModal(
+          Number.isSafeInteger(projectLimit) ? projectLimit : 5,
+          Number.isSafeInteger(threadLimit) ? threadLimit : 5
+        ));
+        return;
+      }
       if (!handlers.onMonitorButton) {
         return;
       }
@@ -1424,6 +1436,25 @@ export class DiscordProvider implements BridgeProvider {
 
     const handlers = this.requireHandlers();
     const actor = this.extractActor(interaction);
+    if (action === "monitor-auto-submit") {
+      if (!handlers.onMonitorAutomaticSettings) {
+        return;
+      }
+      const projectLimit = Number(interaction.fields.getTextInputValue("project_limit").trim());
+      const threadLimit = Number(interaction.fields.getTextInputValue("thread_limit").trim());
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const result = await handlers.onMonitorAutomaticSettings(
+        actor,
+        projectLimit,
+        threadLimit
+      );
+      await interaction.editReply({
+        content: result.content,
+        components: this.buildCommandResultComponents(result.buttons, result.selectMenus),
+        allowedMentions: NO_ALLOWED_MENTIONS
+      });
+      return;
+    }
     if (action === "input-other-submit") {
       const questionIndex = Number(indexPart ?? "");
       if (!Number.isSafeInteger(questionIndex)) {
@@ -1686,6 +1717,35 @@ export class DiscordProvider implements BridgeProvider {
       );
   }
 
+  private buildMonitorAutomaticSettingsModal(
+    projectLimit: number,
+    threadLimit: number
+  ): ModalBuilder {
+    return new ModalBuilder()
+      .setCustomId("codex:monitor-auto-submit:settings")
+      .setTitle("自动管理设置")
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("project_limit")
+            .setLabel("最近项目数（1-20）")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setValue(String(projectLimit))
+            .setMaxLength(2)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("thread_limit")
+            .setLabel("每个项目最近对话数（1-20）")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setValue(String(threadLimit))
+            .setMaxLength(2)
+        )
+      );
+  }
+
   private buildMessageComponents(
     options: ProviderMessageOptions
   ): Array<ActionRowBuilder<ButtonBuilder>> {
@@ -1766,6 +1826,54 @@ export class DiscordProvider implements BridgeProvider {
         await channel.setTopic(topic, `Mark Codex thread ${codexThreadId} as bridge-managed`);
       }
     });
+  }
+
+  async reorderManagedLocations(input: {
+    projectCategoryIds: string[];
+    conversationChannelIdsByCategory: Array<{
+      categoryId: string;
+      channelIds: string[];
+    }>;
+  }): Promise<void> {
+    const guild = await this.getGuild();
+    const channels = await guild.channels.fetch();
+    const positions: Array<{ channel: string; position: number }> = [];
+    const rankedCategoryIds = input.projectCategoryIds.filter(
+      (channelId) => channels.get(channelId)?.type === ChannelType.GuildCategory
+    );
+    const categorySlots = rankedCategoryIds
+      .map((channelId) => channels.get(channelId) as CategoryChannel)
+      .map((channel) => channel.rawPosition)
+      .sort((left, right) => left - right);
+    for (const [index, channelId] of rankedCategoryIds.entries()) {
+      const position = categorySlots[index];
+      const channel = channels.get(channelId) as CategoryChannel | undefined;
+      if (position !== undefined && channel?.rawPosition !== position) {
+        positions.push({ channel: channelId, position });
+      }
+    }
+
+    for (const group of input.conversationChannelIdsByCategory) {
+      const rankedChannelIds = group.channelIds.filter((channelId) => {
+        const channel = channels.get(channelId);
+        return channel?.type === ChannelType.GuildText && channel.parentId === group.categoryId;
+      });
+      const channelSlots = rankedChannelIds
+        .map((channelId) => channels.get(channelId) as TextChannel)
+        .map((channel) => channel.rawPosition)
+        .sort((left, right) => left - right);
+      for (const [index, channelId] of rankedChannelIds.entries()) {
+        const position = channelSlots[index];
+        const channel = channels.get(channelId) as TextChannel | undefined;
+        if (position !== undefined && channel?.rawPosition !== position) {
+          positions.push({ channel: channelId, position });
+        }
+      }
+    }
+
+    if (positions.length > 0) {
+      await guild.channels.setPositions(positions);
+    }
   }
 
   private async runChannelMutation<T>(channelId: string, operation: () => Promise<T>): Promise<T> {

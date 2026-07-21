@@ -1063,7 +1063,7 @@ test("startup backfill trusts locally discovered session history before slow thr
       createdAtMs: nowSeconds * 1000,
       updatedAtMs: nowSeconds * 1000 + 5_000,
       status: "active",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\local-startup-truth.jsonl",
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\local-startup-truth.jsonl",
       sourceKind: "app-server",
       parentThreadId: null,
       actorName: null
@@ -1191,7 +1191,7 @@ test("startup backfill for existing mapped threads falls back to retained Codex 
       createdAtMs: nowSeconds * 1000,
       updatedAtMs: nowSeconds * 1000 + 5_000,
       status: "active",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\existing-partial-local-startup.jsonl",
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\existing-partial-local-startup.jsonl",
       sourceKind: "app-server",
       parentThreadId: null,
       actorName: null
@@ -4301,16 +4301,16 @@ test("discovery auto-attaches recent CLI session threads even when app-server do
       threadId: "cli_thread_1",
       name: "CLI discovered thread",
       preview: "CLI discovered thread",
-      cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+      cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
       repoName: "test-codex-cli",
       createdAtMs: nowMs - 30_000,
       updatedAtMs: nowMs - 2_000,
       status: "idle",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\cli_thread_1.jsonl"
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\cli_thread_1.jsonl"
     }
   ]);
   codex.metadata.set("cli_thread_1", {
-    cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+    cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
     repoName: "test-codex-cli"
   });
   codex.threadDetails.set("cli_thread_1", {
@@ -4376,16 +4376,16 @@ test("discovery preserves CLI source when app-server also lists the same local C
       threadId: "cli_thread_duplicate",
       name: "CLI local title",
       preview: "CLI local title",
-      cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+      cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
       repoName: "test-codex-cli",
       createdAtMs: nowMs - 30_000,
       updatedAtMs: nowMs - 2_000,
       status: "idle",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\cli_thread_duplicate.jsonl"
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\cli_thread_duplicate.jsonl"
     }
   ]);
   codex.metadata.set("cli_thread_duplicate", {
-    cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+    cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
     repoName: "test-codex-cli",
     threadName: "App-server metadata title"
   });
@@ -4535,7 +4535,7 @@ test("startup discovery skips stale local subagent threads whose parent no longe
       createdAtMs: nowMs - 20 * 60_000,
       updatedAtMs: nowMs - 10 * 60_000,
       status: "idle",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\stale_subagent_startup.jsonl",
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\stale_subagent_startup.jsonl",
       sourceKind: "cli-session",
       parentThreadId: "parent_thread_startup",
       actorName: "Halley"
@@ -4653,7 +4653,7 @@ test("live discovery does not attach a new subagent thread without an anchored p
       createdAtMs: nowMs - 30_000,
       updatedAtMs: nowMs - 5_000,
       status: "active",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\live_subagent_without_anchor.jsonl",
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\live_subagent_without_anchor.jsonl",
       sourceKind: "cli-session",
       parentThreadId: "parent_thread_live_discovery",
       actorName: "Sartre"
@@ -4798,7 +4798,7 @@ test("startup discovery skips stale local subagent threads whose spawn turn is n
       createdAtMs: nowMs - 20 * 60_000,
       updatedAtMs: nowMs - 10 * 60_000,
       status: "idle",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\stale-child-omitted-turn.jsonl",
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\stale-child-omitted-turn.jsonl",
       sourceKind: "app-server",
       parentThreadId: "parent_thread_retained_window",
       actorName: "Arendt"
@@ -5331,7 +5331,7 @@ test("startup attach replays same-turn live session events that land during star
   const nowSeconds = Math.floor(now / 1000);
   const threadId = "thr_startup_live_handoff";
   const turnId = "turn_startup_live_handoff";
-  const sessionFilePath = "C:\\Users\\TestUser\\.codex\\sessions\\startup-live-handoff.jsonl";
+  const sessionFilePath = "C:\\Users\\Natale\\.codex\\sessions\\startup-live-handoff.jsonl";
   codex.threads = [
     {
       id: threadId,
@@ -5801,7 +5801,7 @@ test("startup refresh budgets missing session events after the latest mirrored s
   });
 
   const now = Date.now();
-  const sourceFilePath = "C:\\Users\\TestUser\\.codex\\sessions\\existing-thread.jsonl";
+  const sourceFilePath = "C:\\Users\\Natale\\.codex\\sessions\\existing-thread.jsonl";
   const anchorSourceOrder = "0000000000000100:0000";
   const anchorEventKey = "line:100:0";
   store.upsertThreadBridge({
@@ -5950,7 +5950,7 @@ test("startup frontier backfill falls back to full recent-turn replay when a new
   });
 
   const now = Date.now();
-  const sourceFilePath = "C:\\Users\\TestUser\\.codex\\sessions\\frontier-fallback.jsonl";
+  const sourceFilePath = "C:\\Users\\Natale\\.codex\\sessions\\frontier-fallback.jsonl";
   const anchorSourceOrder = "0000000000000100:0000";
   const anchorEventKey = "line:100:0";
   store.upsertThreadBridge({
@@ -6075,7 +6075,7 @@ test("startup frontier backfill records stale replayed child anchors without eag
   });
 
   const now = Date.now();
-  const sourceFilePath = "C:\\Users\\TestUser\\.codex\\sessions\\2026\\04\\16\\rollout-existing-thread.jsonl";
+  const sourceFilePath = "C:\\Users\\Natale\\.codex\\sessions\\2026\\04\\16\\rollout-existing-thread.jsonl";
   store.upsertThreadBridge({
     codexThreadId: "existing_thread_spawn",
     parentCodexThreadId: null,
@@ -6663,14 +6663,14 @@ test("Desktop discovery keeps the latest app title while using local task activi
       status: { type: "active" as const }
     }
   ] as any;
-  codex.metadata.set(threadId, { cwd: "C:\\workspace\\sample-dashboard", repoName: "sample-dashboard" });
+  codex.metadata.set(threadId, { cwd: "E:\\Code\\poly-market", repoName: "poly-market" });
   sessionTailer.setLocalThreads([
     {
       threadId,
       name: null,
       preview: "旧的首条消息不应覆盖重命名标题",
-      cwd: "C:\\workspace\\sample-dashboard",
-      repoName: "sample-dashboard",
+      cwd: "E:\\Code\\poly-market",
+      repoName: "poly-market",
       createdAtMs: (completedSeconds - 60) * 1000,
       updatedAtMs: completedSeconds * 1000,
       status: "idle",
@@ -6709,8 +6709,8 @@ test("stale local Desktop task starts omitted by app-server do not enter the mon
       threadId,
       name: "Old interrupted task",
       preview: "Old interrupted task",
-      cwd: "C:\\workspace\\example-mobile",
-      repoName: "example-mobile",
+      cwd: "E:\\Code\\codex手机端",
+      repoName: "codex手机端",
       createdAtMs: staleAtMs - 60_000,
       updatedAtMs: staleAtMs,
       status: "active",
@@ -6755,16 +6755,16 @@ test("a live app-server status wins over an old unmatched local task start", asy
     }
   ] as any;
   codex.metadata.set(threadId, {
-    cwd: "C:\\workspace\\example-mobile",
-    repoName: "example-mobile"
+    cwd: "E:\\Code\\codex手机端",
+    repoName: "codex手机端"
   });
   sessionTailer.setLocalThreads([
     {
       threadId,
       name: null,
       preview: "Old unmatched task start",
-      cwd: "C:\\workspace\\example-mobile",
-      repoName: "example-mobile",
+      cwd: "E:\\Code\\codex手机端",
+      repoName: "codex手机端",
       createdAtMs: staleAtMs - 60_000,
       updatedAtMs: staleAtMs,
       status: "active",
@@ -6807,7 +6807,7 @@ test("CLI discovery uses the first user message as the stable thread name", asyn
           id: "019d6154-aa76-74c3-ba4e-58e34911b226",
           source: "cli",
           originator: "codex-tui",
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
           timestamp: "2026-04-06T07:47:11.000Z"
         }
       }),
@@ -6877,7 +6877,7 @@ test("session tailer summarizes apply_patch edits with per-file line counts", as
           id: threadId,
           source: "cli",
           originator: "codex-tui",
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
           timestamp: "2026-04-08T09:00:00.000Z"
         }
       }),
@@ -6929,7 +6929,7 @@ test("CLI discovery ignores injected AGENTS.md instruction blocks when deriving 
           id: "019d7000-aa76-74c3-ba4e-58e34911b999",
           source: "cli",
           originator: "codex-tui",
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
           timestamp: "2026-04-06T08:30:00.000Z"
         }
       }),
@@ -6939,7 +6939,7 @@ test("CLI discovery ignores injected AGENTS.md instruction blocks when deriving 
         payload: {
           type: "user_message",
           message:
-            "AGENTS.md instructions for C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli\n\n<INSTRUCTIONS>\n## JavaScript REPL (Node)\n</INSTRUCTIONS>\n<environment_context>\n</environment_context>"
+            "AGENTS.md instructions for C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli\n\n<INSTRUCTIONS>\n## JavaScript REPL (Node)\n</INSTRUCTIONS>\n<environment_context>\n</environment_context>"
         }
       }),
       JSON.stringify({
@@ -6995,7 +6995,7 @@ test("bridge monitors desktop and CLI sessions together while keeping desktop ap
       threadId: "cli_thread",
       name: "CLI discovered thread",
       preview: "CLI preview",
-      cwd: "C:\\Users\\TestUser\\Desktop\\projects\\test-codex-cli",
+      cwd: "C:\\Users\\Natale\\Desktop\\projects\\test-codex-cli",
       repoName: "test-codex-cli",
       createdAtMs: Date.now() - 30_000,
       updatedAtMs: Date.now() - 5_000,
@@ -7068,3 +7068,4 @@ test("stale Discord channel mappings are repaired instead of crashing status upd
     await bridge.stop();
   }
 });
+

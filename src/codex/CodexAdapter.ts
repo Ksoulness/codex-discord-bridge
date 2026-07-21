@@ -146,11 +146,66 @@ export class CodexAdapter extends EventEmitter {
 
   async listThreads(params: {
     limit: number;
-    sortKey: "created_at" | "updated_at";
+    sortKey: "created_at" | "updated_at" | "recency_at";
     archived?: boolean;
     sourceKinds?: string[];
     timeoutMs?: number;
   }): Promise<CodexThreadSummary[]> {
+    const result = await this.listThreadsPage(params);
+    return result.threads;
+  }
+
+  async listAllThreads(params: {
+    sortKey: "created_at" | "updated_at" | "recency_at";
+    archived?: boolean;
+    sourceKinds?: string[];
+    pageSize?: number;
+    maxItems?: number;
+    timeoutMs?: number;
+  }): Promise<CodexThreadSummary[]> {
+    const pageSize = Math.max(1, Math.min(100, Math.floor(params.pageSize ?? 100)));
+    const maxItems = Math.max(pageSize, Math.floor(params.maxItems ?? 2_000));
+    const threads: CodexThreadSummary[] = [];
+    const seenThreadIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    const maxPages = Math.ceil(maxItems / pageSize) + 1;
+    let pageCount = 0;
+    let cursor: string | undefined;
+
+    while (threads.length < maxItems && pageCount < maxPages) {
+      pageCount += 1;
+      const page = await this.listThreadsPage({
+        limit: Math.min(pageSize, maxItems - threads.length),
+        sortKey: params.sortKey,
+        ...(params.archived === undefined ? {} : { archived: params.archived }),
+        ...(params.sourceKinds === undefined ? {} : { sourceKinds: params.sourceKinds }),
+        ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
+        ...(cursor === undefined ? {} : { cursor })
+      });
+      for (const thread of page.threads) {
+        if (!seenThreadIds.has(thread.id)) {
+          seenThreadIds.add(thread.id);
+          threads.push(thread);
+        }
+      }
+      if (!page.nextCursor || seenCursors.has(page.nextCursor) || page.threads.length === 0) {
+        break;
+      }
+      seenCursors.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
+
+    return threads;
+  }
+
+  private async listThreadsPage(params: {
+    limit: number;
+    sortKey: "created_at" | "updated_at" | "recency_at";
+    archived?: boolean;
+    sourceKinds?: string[];
+    timeoutMs?: number;
+    cursor?: string;
+  }): Promise<{ threads: CodexThreadSummary[]; nextCursor: string | null }> {
     const { timeoutMs, ...requestParams } = params;
     const result = (await this.request(
       "thread/list",
@@ -158,9 +213,15 @@ export class CodexAdapter extends EventEmitter {
       timeoutMs === undefined ? {} : { timeoutMs }
     )) as {
       data?: unknown[];
+      nextCursor?: unknown;
     };
 
-    return (result.data ?? []).map((entry) => this.normalizeThreadSummary(entry));
+    return {
+      threads: (result.data ?? []).map((entry) => this.normalizeThreadSummary(entry)),
+      nextCursor: typeof result.nextCursor === "string" && result.nextCursor.trim()
+        ? result.nextCursor
+        : null
+    };
   }
 
   async readThread(threadId: string, includeTurns = false): Promise<CodexThreadDetails> {
@@ -237,7 +298,13 @@ export class CodexAdapter extends EventEmitter {
   async startTurn(
     threadId: string,
     text: string,
-    options: { model?: string | null; reasoningEffort?: string | null; localImagePaths?: string[] } = {}
+    options: {
+      model?: string | null;
+      reasoningEffort?: string | null;
+      localImagePaths?: string[];
+      approvalPolicy?: "never";
+      sandboxPolicy?: { type: "dangerFullAccess" };
+    } = {}
   ): Promise<void> {
     await this.request("turn/start", {
       threadId,
@@ -252,7 +319,9 @@ export class CodexAdapter extends EventEmitter {
         }))
       ],
       ...(options.model?.trim() ? { model: options.model.trim() } : {}),
-      ...(options.reasoningEffort?.trim() ? { reasoningEffort: options.reasoningEffort.trim() } : {})
+      ...(options.reasoningEffort?.trim() ? { reasoningEffort: options.reasoningEffort.trim() } : {}),
+      ...(options.approvalPolicy ? { approvalPolicy: options.approvalPolicy } : {}),
+      ...(options.sandboxPolicy ? { sandboxPolicy: options.sandboxPolicy } : {})
     });
   }
 
@@ -497,6 +566,7 @@ export class CodexAdapter extends EventEmitter {
       sourceSubagentOther: this.readNonEmptyString(subagent?.other),
       createdAt: typeof value.createdAt === "number" ? value.createdAt : null,
       updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : null,
+      recencyAt: typeof value.recencyAt === "number" ? value.recencyAt : null,
       ephemeral: Boolean(value.ephemeral),
       archived: Boolean(value.archived),
       status: this.normalizeStatus(value.status)

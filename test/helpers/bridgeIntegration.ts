@@ -1096,3 +1096,4 @@ export class FakeDiscordAdapter {
   }
   async detachDiscordLocation() {}
 }
+

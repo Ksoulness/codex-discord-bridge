@@ -1,10 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # Paused to avoid spending GitHub Actions credits.
+  # Re-add push/pull_request triggers when CI should run automatically again.
   workflow_dispatch:
 
 jobs:
@@ -31,8 +29,8 @@ jobs:
       - name: Check
         run: npm run check
 
-      - name: Coverage report
-        run: npm run coverage
+      - name: Coverage gate
+        run: npm run coverage:gate
 
   test-macos:
     runs-on: macos-latest

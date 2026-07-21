@@ -11,6 +11,7 @@ import {
 } from "discord.js";
 import { DiscordProvider } from "../src/providers/discord/DiscordProvider.js";
 import { createLogger } from "../src/logger.js";
+import { renderStatusCard } from "../src/util/formatting.js";
 
 test("non-MCP approval components place feedback before cancel and details last", () => {
   const provider = new DiscordProvider(
@@ -358,6 +359,117 @@ test("project category creation does not adopt an existing same-name category", 
   assert.deepEqual(result, { id: "bridge-category", created: true });
   assert.equal(createCalls, 1);
   assert.equal(createPayload?.["name"], "Repo");
+});
+
+test("managed categories and conversation channels are reordered into their existing slots", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  const channels = new Collection<string, unknown>([
+    ["category_old", { id: "category_old", type: ChannelType.GuildCategory, rawPosition: 2 }],
+    ["category_new", { id: "category_new", type: ChannelType.GuildCategory, rawPosition: 8 }],
+    ["channel_old", {
+      id: "channel_old",
+      type: ChannelType.GuildText,
+      parentId: "category_new",
+      rawPosition: 4
+    }],
+    ["channel_new", {
+      id: "channel_new",
+      type: ChannelType.GuildText,
+      parentId: "category_new",
+      rawPosition: 7
+    }]
+  ]);
+  let positions: Array<{ channel: string; position: number }> = [];
+  (provider as unknown as {
+    getGuild: () => Promise<{
+      channels: {
+        fetch: () => Promise<Collection<string, unknown>>;
+        setPositions: (value: Array<{ channel: string; position: number }>) => Promise<void>;
+      };
+    }>;
+  }).getGuild = async () => ({
+    channels: {
+      fetch: async () => channels,
+      setPositions: async (value) => {
+        positions = value;
+      }
+    }
+  });
+
+  await provider.reorderManagedLocations({
+    projectCategoryIds: ["category_new", "category_old"],
+    conversationChannelIdsByCategory: [{
+      categoryId: "category_new",
+      channelIds: ["channel_new", "channel_old"]
+    }]
+  });
+
+  assert.deepEqual(positions, [
+    { channel: "category_new", position: 2 },
+    { channel: "category_old", position: 8 },
+    { channel: "channel_new", position: 4 },
+    { channel: "channel_old", position: 7 }
+  ]);
+});
+
+test("managed locations do not issue a position mutation when the order is already correct", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  const channels = new Collection<string, unknown>([
+    ["category_new", { id: "category_new", type: ChannelType.GuildCategory, rawPosition: 2 }],
+    ["category_old", { id: "category_old", type: ChannelType.GuildCategory, rawPosition: 8 }],
+    ["channel_new", {
+      id: "channel_new",
+      type: ChannelType.GuildText,
+      parentId: "category_new",
+      rawPosition: 4
+    }],
+    ["channel_old", {
+      id: "channel_old",
+      type: ChannelType.GuildText,
+      parentId: "category_new",
+      rawPosition: 7
+    }]
+  ]);
+  let setPositionsCalls = 0;
+  (provider as unknown as {
+    getGuild: () => Promise<{
+      channels: {
+        fetch: () => Promise<Collection<string, unknown>>;
+        setPositions: (value: Array<{ channel: string; position: number }>) => Promise<void>;
+      };
+    }>;
+  }).getGuild = async () => ({
+    channels: {
+      fetch: async () => channels,
+      setPositions: async () => {
+        setPositionsCalls += 1;
+      }
+    }
+  });
+
+  await provider.reorderManagedLocations({
+    projectCategoryIds: ["category_new", "category_old"],
+    conversationChannelIdsByCategory: [{
+      categoryId: "category_new",
+      channelIds: ["channel_new", "channel_old"]
+    }]
+  });
+
+  assert.equal(setPositionsCalls, 0);
 });
 
 test("discovery does not sweep manual text channels under a seeded category", async () => {
@@ -1110,6 +1222,54 @@ test("upsertStatusCard edits and unpins an existing status card without creating
   assert.equal(sendCalls, 0);
 });
 
+test("upsertStatusCard does not edit an unchanged status card", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  const view = {
+    threadId: "019abcde-full",
+    title: "Test",
+    shortThreadId: "019abcde",
+    kindLabel: "Codex",
+    parentShortThreadId: null,
+    projectLabel: "repo",
+    statusLabel: "Completed",
+    attentionLabel: "",
+    workspaceLabel: "C:\\repo",
+    lastActivityAt: Date.parse("2026-07-21T00:00:00.000Z"),
+    latestCommandPreview: null,
+    latestAgentMessage: null
+  };
+  let editCalls = 0;
+  const existing = {
+    id: "existing-status",
+    content: renderStatusCard(view),
+    edit: async () => {
+      editCalls += 1;
+      return existing;
+    }
+  };
+  const target = { id: "status-channel" };
+  const internal = provider as unknown as {
+    fetchWritableTargetChannel: () => Promise<typeof target>;
+    findExistingStatusCard: () => Promise<typeof existing>;
+    cleanupPinnedStatusCards: () => Promise<void>;
+  };
+  internal.fetchWritableTargetChannel = async () => target;
+  internal.findExistingStatusCard = async () => existing;
+  internal.cleanupPinnedStatusCards = async () => undefined;
+
+  const messageId = await provider.upsertStatusCard("status-channel", "existing-status", view);
+
+  assert.equal(messageId, "existing-status");
+  assert.equal(editCalls, 0);
+});
+
 test("upsertStatusCard unpins all historical status cards only once per channel and conversation", async () => {
   const provider = new DiscordProvider(
     {
@@ -1342,8 +1502,8 @@ test("command result components render string selects and buttons in valid actio
         minValues: 0,
         maxValues: 2,
         options: [
-          { label: "sample-dashboard", value: "sample", default: true },
-          { label: "example-mobile", value: "mobile" }
+          { label: "poly-market", value: "poly", default: true },
+          { label: "codex手机端", value: "mobile" }
         ]
       }
     ]
@@ -1384,7 +1544,7 @@ test("monitor buttons dispatch to the monitor handler with an ephemeral result",
             placeholder: "选择项目",
             minValues: 0,
             maxValues: 1,
-            options: [{ label: "sample-dashboard", value: "sample" }]
+            options: [{ label: "poly-market", value: "poly" }]
           }
         ]
       };
@@ -2061,6 +2221,78 @@ test("proposed plan feedback button opens a feedback modal", async () => {
   const modalRecord = modal as unknown as Record<string, unknown>;
   assert.equal(modalRecord.custom_id, "codex:plan-feedback-submit:plan_token");
   assert.equal(modalRecord.title, "Tell Codex what to do differently");
+});
+
+test("automatic monitor settings button opens a prefilled modal", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  (provider as unknown as { handlers: unknown }).handlers = createNoopHandlers();
+
+  let modal: Record<string, unknown> | null = null;
+  const interaction = {
+    customId: "codex:monitor:auto-settings:7:4",
+    user: { id: "user_1", username: "tester" },
+    member: null,
+    isButton: () => true,
+    showModal: async (value: { toJSON(): Record<string, unknown> }) => {
+      modal = value.toJSON();
+    }
+  };
+
+  await (provider as unknown as { handleButton: (interaction: unknown) => Promise<void> }).handleButton(interaction);
+
+  const modalRecord = modal as unknown as Record<string, unknown>;
+  assert.equal(modalRecord.custom_id, "codex:monitor-auto-submit:settings");
+  assert.equal(modalRecord.title, "自动管理设置");
+  const components = modalRecord.components as Array<{ components: Array<{ custom_id: string; value: string }> }>;
+  assert.deepEqual(components.map((row) => row.components[0]?.value), ["7", "4"]);
+});
+
+test("automatic monitor settings modal dispatches numeric limits", async () => {
+  const provider = new DiscordProvider(
+    {
+      token: "token",
+      applicationId: "application",
+      guildId: "guild"
+    },
+    createLogger("silent")
+  );
+  let received: Record<string, unknown> | null = null;
+  let editedContent = "";
+  (provider as unknown as { handlers: unknown }).handlers = {
+    ...createNoopHandlers(),
+    onMonitorAutomaticSettings: async (actor: unknown, projectLimit: number, threadLimit: number) => {
+      received = { actor, projectLimit, threadLimit };
+      return { content: "automatic enabled", ephemeral: true as const };
+    }
+  };
+  const interaction = {
+    customId: "codex:monitor-auto-submit:settings",
+    user: { id: "user_1", username: "tester" },
+    member: null,
+    fields: {
+      getTextInputValue: (field: string) => field === "project_limit" ? "6" : "3"
+    },
+    deferReply: async () => undefined,
+    editReply: async (payload: { content: string }) => {
+      editedContent = payload.content;
+    }
+  };
+
+  await (provider as unknown as { handleModalSubmit: (interaction: unknown) => Promise<void> }).handleModalSubmit(
+    interaction
+  );
+
+  const receivedRecord = received as unknown as Record<string, unknown>;
+  assert.equal(receivedRecord.projectLimit, 6);
+  assert.equal(receivedRecord.threadLimit, 3);
+  assert.equal(editedContent, "automatic enabled");
 });
 
 test("proposed plan feedback modal dispatches typed feedback", async () => {

@@ -972,10 +972,8 @@ test("e2e-live Discord verify loads repo dotenv for in-process inspection", asyn
   writeFileSync(
     path.join(repoRoot, "dist", "src", "index.js"),
     [
-      "import { realpathSync } from \"node:fs\";",
-      "",
       "export async function runInspectDiscordThread(channelId) {",
-      "  if (realpathSync(process.cwd()) !== realpathSync(process.env.EXPECTED_REPO_ROOT)) {",
+      "  if (process.cwd() !== process.env.EXPECTED_REPO_ROOT) {",
       "    throw new Error(`wrong cwd ${process.cwd()}`);",
       "  }",
       "  if (process.env.DISCORD_BOT_TOKEN !== 'dotenv-token') {",

@@ -126,7 +126,7 @@ test("CodexAdapter starts a thread with the selected model and reasoning effort"
   };
 
   const thread = await adapter.startThread({
-    cwd: "C:\\workspace\\example-mobile",
+    cwd: "E:\\Code\\codex手机端",
     model: "gpt-5.6-terra",
     reasoningEffort: "medium"
   });
@@ -135,7 +135,7 @@ test("CodexAdapter starts a thread with the selected model and reasoning effort"
   assert.deepEqual(requests, [{
     method: "thread/start",
     params: {
-      cwd: "C:\\workspace\\example-mobile",
+      cwd: "E:\\Code\\codex手机端",
       model: "gpt-5.6-terra",
       reasoningEffort: "medium"
     }
@@ -165,6 +165,43 @@ test("CodexAdapter exposes app-server subagent parent metadata", async () => {
 
   assert.equal(thread?.parentThreadId, "parent_thread");
   assert.equal(thread?.sourceSubagentOther, "worker");
+});
+
+test("CodexAdapter paginates the complete thread inventory in recency order", async () => {
+  const { logger } = createLogger();
+  const adapter = new CodexAdapter("codex", logger as never, process.cwd());
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  (adapter as unknown as {
+    request: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+  }).request = async (method, params) => {
+    requests.push({ method, params });
+    if (!params.cursor) {
+      return {
+        data: [{ id: "thread_new", recencyAt: 22, status: { type: "idle" } }],
+        nextCursor: "cursor_2"
+      };
+    }
+    return {
+      data: [{ id: "thread_old", recencyAt: 11, status: { type: "idle" } }],
+      nextCursor: null
+    };
+  };
+
+  const threads = await adapter.listAllThreads({
+    sortKey: "recency_at",
+    archived: false,
+    pageSize: 1,
+    maxItems: 10
+  });
+
+  assert.deepEqual(threads.map((thread) => [thread.id, thread.recencyAt]), [
+    ["thread_new", 22],
+    ["thread_old", 11]
+  ]);
+  assert.deepEqual(requests.map((request) => request.params), [
+    { limit: 1, sortKey: "recency_at", archived: false },
+    { limit: 1, sortKey: "recency_at", archived: false, cursor: "cursor_2" }
+  ]);
 });
 
 test("CodexAdapter ignores websocket child exit when the transport stays connected", async () => {
@@ -221,7 +258,7 @@ test("CodexAdapter metadata exposes guardian subagent source from session JSONL"
       type: "session_meta",
       payload: {
         id: threadId,
-        cwd: "C:\\Users\\TestUser\\Desktop\\projects\\codex-mobile",
+        cwd: "C:\\Users\\Natale\\Desktop\\projects\\codex-mobile",
         originator: "Codex Desktop",
         source: {
           subagent: {

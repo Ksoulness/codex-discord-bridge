@@ -164,8 +164,8 @@ test("npm-run execute runs build before coverage", () => {
     {
       command: "/node-bin",
       args: [
-        path.join(fakeRepo, "scripts", "run-tests.cjs"),
-        "--coverage"
+        "--experimental-test-coverage",
+        path.join(fakeRepo, "dist", "test", "run.js")
       ],
       cwd: fakeRepo
     }
@@ -206,33 +206,33 @@ test("npm-run execute applies the core coverage gate when requested", () => {
     {
       command: "/node-bin",
       args: [
-        path.join(fakeRepo, "scripts", "run-tests.cjs"),
-        "--coverage",
-        "--coverage-lines=80",
-        "--coverage-include",
+        "--experimental-test-coverage",
+        "--test-coverage-lines=80",
+        "--test-coverage-include",
         "dist/src/bridge/BridgeService.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/bridge/approval/*.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/bridge/artifacts/*.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/bridge/commands/*.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/bridge/events/subagentAttachment.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/bridge/runtime/*.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/codex/codexFsHelpers.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/config.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/platform.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/policy/*.js",
-        "--coverage-include",
+        "--test-coverage-include",
         "dist/src/store/StateStore.js",
-        "--coverage-include",
-        "scripts/npm-run.cjs"
+        "--test-coverage-include",
+        "scripts/npm-run.cjs",
+        path.join(fakeRepo, "dist", "test", "run.js")
       ],
       cwd: fakeRepo
     }
@@ -344,7 +344,7 @@ test("npm-run execute covers build-gated routes and short-circuits on build fail
     {
       action: "test",
       extraArgs: [] as string[],
-      expectedSecondArgs: [path.join(fakeRepo, "scripts", "run-tests.cjs")]
+      expectedSecondArgs: [path.join(fakeRepo, "dist", "test", "run.js")]
     }
   ]) {
     const calls: Array<{ command: string; args: string[] }> = [];

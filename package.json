@@ -1,8 +1,8 @@
 {
-  "name": "codex-discord-bridge",
+  "name": "codex-mobile",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first Codex to Discord bridge for monitoring conversations and handling supported approvals.",
+  "description": "Local-first Codex to Discord bridge for monitoring conversations and approving actions from mobile.",
   "type": "module",
   "engines": {
     "node": ">=24"

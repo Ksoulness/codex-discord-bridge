@@ -2,7 +2,7 @@
 
 ## Status
 
-Codex Discord Bridge is a **Windows-first public beta**. Windows is the primary developed and tested platform, macOS is best-effort and not yet validated with Codex Desktop, and Linux is unsupported. Its security model is intentionally conservative, but it should still be treated as an enthusiast tool, not an enterprise-hardened remote admin surface.
+`codex-mobile` is a **Windows-first public beta**. Windows is the primary developed and tested platform, macOS is best-effort and not yet validated with Codex Desktop, and Linux is unsupported. Its security model is intentionally conservative, but it should still be treated as an enthusiast tool, not an enterprise-hardened remote admin surface.
 
 ## Threat model
 
@@ -75,7 +75,7 @@ If you find a security issue:
    - reproduction steps
    - whether the issue can leak data or bypass approval controls
 
-Use GitHub's private vulnerability-reporting feature when it is enabled for this repository. Do not include tokens, `.env` files, local databases, or unredacted local paths in a public issue.
+Until a dedicated security contact is added, treat the repository owner/maintainer as the initial private contact.
 
 ## Scope for first public release
 

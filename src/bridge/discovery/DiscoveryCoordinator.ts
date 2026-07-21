@@ -128,6 +128,8 @@ interface DiscoveryCoordinatorDependencies {
 const STARTUP_MAPPED_REFRESH_BUDGET_MS = 15_000;
 const LOCAL_ACTIVE_STALE_AFTER_MS = 6 * 60 * 60 * 1_000;
 const MONITOR_INVENTORY_REFRESH_LIMIT = 100;
+const MIN_AUTOMATIC_MONITOR_INVENTORY_LIMIT = 50;
+const MAX_AUTOMATIC_MONITOR_INVENTORY_LIMIT = 500;
 const DISCOVERY_APP_SERVER_REQUEST_TIMEOUT_MS = 4_000;
 
 const COMPLETED_TITLE_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -176,17 +178,35 @@ export class DiscoveryCoordinator {
   }
 
   async refreshMappedThreadsOnStartup(): Promise<void> {
+    await this.refreshMappedThreads(true);
+  }
+
+  async refreshMappedThreadsNow(): Promise<void> {
+    await this.refreshMappedThreads(false);
+  }
+
+  private async refreshMappedThreads(isStartupRefresh: boolean): Promise<void> {
     const allowedThreadIds = this.discoveryAllowedThreadIds();
     const mapped = this.context.stateStore
       .listThreadBridges()
       .filter((bridge) => !allowedThreadIds || allowedThreadIds.has(bridge.codexThreadId));
     if (mapped.length === 0) {
-      this.runtime.startupRefreshedThreadIds.clear();
-      this.deps.printProgress("Startup phase A: no existing mapped threads to refresh.");
+      if (isStartupRefresh) {
+        this.runtime.startupRefreshedThreadIds.clear();
+      }
+      this.deps.printProgress(
+        isStartupRefresh
+          ? "Startup phase A: no existing mapped threads to refresh."
+          : "Full monitor refresh: no existing mapped threads to refresh."
+      );
       return;
     }
 
-    this.deps.printProgress(`Startup phase A: refreshing ${mapped.length} existing mapped thread(s).`);
+    this.deps.printProgress(
+      isStartupRefresh
+        ? `Startup phase A: refreshing ${mapped.length} existing mapped thread(s).`
+        : `Full monitor refresh: refreshing ${mapped.length} existing mapped thread(s).`
+    );
     const candidates: DiscoveryCandidate[] = [];
     const prunedThreadIds = new Set<string>();
 
@@ -197,7 +217,7 @@ export class DiscoveryCoordinator {
       }
       if (summary.archived) {
         this.deps.printProgress(
-          `Skipping archived ${bridge.sourceKind === "cli-session" ? "CLI " : ""}${bridge.channelKind === "subagent" ? "sub-agent" : "thread"} ${shortThreadId(bridge.codexThreadId)} during startup refresh.`
+          `Skipping archived ${bridge.sourceKind === "cli-session" ? "CLI " : ""}${bridge.channelKind === "subagent" ? "sub-agent" : "thread"} ${shortThreadId(bridge.codexThreadId)} during mapped refresh.`
         );
         continue;
       }
@@ -245,12 +265,26 @@ export class DiscoveryCoordinator {
     }
 
     if (candidates.length === 0) {
-      this.runtime.startupRefreshedThreadIds.clear();
-      this.deps.printProgress("Startup phase A: no mapped threads were available from Codex.");
+      if (isStartupRefresh) {
+        this.runtime.startupRefreshedThreadIds.clear();
+      }
+      this.deps.printProgress(
+        isStartupRefresh
+          ? "Startup phase A: no mapped threads were available from Codex."
+          : "Full monitor refresh: no mapped threads were available from Codex."
+      );
       return;
     }
 
     const refreshPromise = this.runAttachesWithConcurrency(candidates, false, true, true);
+    if (!isStartupRefresh) {
+      const refreshedThreadIds = await refreshPromise;
+      this.mergeThreadIds(refreshedThreadIds, await this.deps.pollLocalSessionEvents());
+      this.mergeThreadIds(refreshedThreadIds, await this.deps.pollDesktopApprovalEvents());
+      await this.deps.drainThreadEventQueue(refreshedThreadIds);
+      this.deps.printProgress("Full monitor mapped-thread refresh completed.");
+      return;
+    }
     let refreshTimer: NodeJS.Timeout | undefined;
     const refreshResult = await Promise.race([
       refreshPromise.then((threadIds) => ({ timedOut: false as const, threadIds })),
@@ -471,36 +505,56 @@ export class DiscoveryCoordinator {
 
   private async refreshMonitorInventoryNowInternal(): Promise<number> {
     const allowedThreadIds = this.discoveryAllowedThreadIds();
+    const automaticSettings = this.monitorSelection.getManagementSettings();
+    const automaticMode = automaticSettings.mode === "automatic";
+    const automaticInventoryLimit = Math.min(
+      MAX_AUTOMATIC_MONITOR_INVENTORY_LIMIT,
+      Math.max(
+        MIN_AUTOMATIC_MONITOR_INVENTORY_LIMIT,
+        automaticSettings.projectLimit * automaticSettings.threadLimit * 2
+      )
+    );
     const activeWindowMs = this.monitorSelection.getActiveWindowHours() * 60 * 60 * 1000;
     const activeWindowCutoffSeconds = Math.floor((Date.now() - activeWindowMs) / 1000);
     let appServerThreads: CodexThreadSummary[] = [];
     let appServerRefreshSucceeded = false;
     try {
-      appServerThreads = await this.context.codexAdapter.listThreads({
-        limit: MONITOR_INVENTORY_REFRESH_LIMIT,
-        sortKey: "updated_at",
-        archived: false,
-        timeoutMs: DISCOVERY_APP_SERVER_REQUEST_TIMEOUT_MS,
-        ...(this.context.sourceKinds.length > 0 ? { sourceKinds: this.context.sourceKinds } : {})
-      });
+      appServerThreads = automaticMode
+        ? await this.context.codexAdapter.listAllThreads({
+            sortKey: "recency_at",
+            archived: false,
+            pageSize: Math.min(MONITOR_INVENTORY_REFRESH_LIMIT, automaticInventoryLimit),
+            maxItems: automaticInventoryLimit,
+            timeoutMs: DISCOVERY_APP_SERVER_REQUEST_TIMEOUT_MS,
+            ...(this.context.sourceKinds.length > 0 ? { sourceKinds: this.context.sourceKinds } : {})
+          })
+        : await this.context.codexAdapter.listThreads({
+            limit: MONITOR_INVENTORY_REFRESH_LIMIT,
+            sortKey: "updated_at",
+            archived: false,
+            timeoutMs: DISCOVERY_APP_SERVER_REQUEST_TIMEOUT_MS,
+            ...(this.context.sourceKinds.length > 0 ? { sourceKinds: this.context.sourceKinds } : {})
+          });
       appServerRefreshSucceeded = true;
     } catch (error) {
       this.context.logger.warn({ error }, "Failed to refresh monitor inventory from Codex app-server.");
     }
-    appServerThreads = appServerThreads.filter((thread) =>
-      thread.status.type === "active" ||
-      (thread.updatedAt ?? thread.createdAt ?? 0) >= activeWindowCutoffSeconds
-    );
+    if (!automaticMode) {
+      appServerThreads = appServerThreads.filter((thread) =>
+        thread.status.type === "active" ||
+        (thread.updatedAt ?? thread.createdAt ?? 0) >= activeWindowCutoffSeconds
+      );
+    }
 
     const localThreads = await this.listLocalDiscoveryCandidates(
-      MONITOR_INVENTORY_REFRESH_LIMIT,
+      automaticMode ? automaticInventoryLimit : MONITOR_INVENTORY_REFRESH_LIMIT,
       false,
-      activeWindowMs
+      automaticMode ? Number.MAX_SAFE_INTEGER : activeWindowMs
     );
     const stateDatabaseThreads = this.listStateDatabaseDiscoveryCandidates(
-      MONITOR_INVENTORY_REFRESH_LIMIT,
+      automaticMode ? automaticInventoryLimit : MONITOR_INVENTORY_REFRESH_LIMIT,
       false,
-      activeWindowMs
+      automaticMode ? Number.MAX_SAFE_INTEGER : activeWindowMs
     );
     const appServerThreadIds = new Set(appServerThreads.map((thread) => thread.id));
     const authoritativeLocalThreads = appServerRefreshSucceeded
@@ -518,8 +572,15 @@ export class DiscoveryCoordinator {
         ? authoritativeStateDatabaseThreads.filter((thread) => allowedThreadIds.has(thread.threadId))
         : authoritativeStateDatabaseThreads
     );
-    await this.refreshMonitorInventory(candidates, false);
-    if (appServerRefreshSucceeded && this.context.runtimeConfig.discovery.selectiveMonitoring) {
+    const refreshedMonitorThreadIds = await this.refreshMonitorInventory(candidates, false);
+    if (appServerRefreshSucceeded && automaticMode) {
+      this.context.stateStore.markMonitorThreadsUnavailableExcept(refreshedMonitorThreadIds);
+    }
+    if (
+      appServerRefreshSucceeded &&
+      !automaticMode &&
+      this.context.runtimeConfig.discovery.selectiveMonitoring
+    ) {
       const refreshedThreadIds = new Set(candidates.map((candidate) => candidate.summary.id));
       for (const monitor of this.context.stateStore.listMonitorThreads()) {
         if (!refreshedThreadIds.has(monitor.threadId)) {
@@ -862,6 +923,14 @@ export class DiscoveryCoordinator {
     const expectedChannelKind = resolvedParentThreadId ? "subagent" : "conversation";
 
     if (
+      expectedChannelKind === "conversation" &&
+      this.context.runtimeConfig.discovery.selectiveMonitoring &&
+      !explicitlySelectedConversation
+    ) {
+      return false;
+    }
+
+    if (
       expectedChannelKind === "subagent" &&
       !existing &&
       this.context.runtimeConfig.discovery.selectiveMonitoring
@@ -1044,9 +1113,13 @@ export class DiscoveryCoordinator {
             thread.name ??
             thread.preview,
             threadStatus: thread.status.type,
-            lastSeenAt: this.monitorLastSeenIso(thread)
+            lastSeenAt: this.monitorLastSeenIso(thread),
+            recencyAt: this.monitorRecencyIso(thread)
         });
-        if (!forceAttach && !existing && !this.monitorSelection.isEffectivelySelected(thread.id)) {
+        if (
+          this.context.runtimeConfig.discovery.selectiveMonitoring &&
+          !this.monitorSelection.isEffectivelySelected(thread.id)
+        ) {
           return;
         }
       } else if (
@@ -1387,7 +1460,8 @@ export class DiscoveryCoordinator {
   private async refreshMonitorInventory(
     candidates: DiscoveryCandidate[],
     allowFilesystemScan: boolean
-  ): Promise<void> {
+  ): Promise<Set<string>> {
+    const refreshedThreadIds = new Set<string>();
     for (const candidate of candidates) {
       const thread = candidate.summary;
       if (thread.ephemeral) {
@@ -1433,9 +1507,12 @@ export class DiscoveryCoordinator {
           thread.name ??
           thread.preview,
         threadStatus: thread.status.type,
-        lastSeenAt: this.monitorLastSeenIso(thread)
+        lastSeenAt: this.monitorLastSeenIso(thread),
+        recencyAt: this.monitorRecencyIso(thread)
       });
+      refreshedThreadIds.add(thread.id);
     }
+    return refreshedThreadIds;
   }
 
   private monitorLastSeenIso(thread: CodexThreadSummary): string {
@@ -1444,6 +1521,14 @@ export class DiscoveryCoordinator {
       return new Date(seconds * 1000).toISOString();
     }
     return new Date().toISOString();
+  }
+
+  private monitorRecencyIso(thread: CodexThreadSummary): string {
+    const seconds = thread.recencyAt ?? thread.updatedAt ?? thread.createdAt;
+    if (typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0) {
+      return new Date(seconds * 1000).toISOString();
+    }
+    return this.monitorLastSeenIso(thread);
   }
 
   private logStartupTiming(message: string): void {

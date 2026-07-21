@@ -13,6 +13,7 @@ export interface CodexThreadSummary {
   sourceSubagentOther?: string | null;
   createdAt: number | null;
   updatedAt: number | null;
+  recencyAt?: number | null;
   ephemeral: boolean;
   archived?: boolean;
   status: CodexThreadStatus;
@@ -310,9 +311,11 @@ export interface MonitorThreadRecord {
   projectKey: string;
   threadName: string | null;
   threadStatus: CodexThreadStatus["type"];
+  available: boolean;
   selected: boolean;
   pausedDiscordChannelId: string | null;
   lastSeenAt: string;
+  recencyAt: string;
   updatedBy: string | null;
   updatedAt: string;
 }

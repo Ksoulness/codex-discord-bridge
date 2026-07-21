@@ -127,6 +127,14 @@ export function renderTurnStatus(
   ].join("\n");
 }
 
+export function renderDesktopDisconnectedStatus(updatedAt: Date): string {
+  return [
+    "🔴🔴 **状态：已断线**",
+    "原因：Codex Desktop 已关闭或未连接",
+    `更新时间：<t:${Math.floor(updatedAt.getTime() / 1000)}:R>`
+  ].join("\n");
+}
+
 export function summarizeTurnStatusReason(rawReason: string | null | undefined): string | null {
   const normalized = redactSensitiveText(rawReason ?? "").replace(/\s+/g, " ").trim();
   if (!normalized) {
@@ -148,7 +156,7 @@ export function summarizeTurnStatusReason(rawReason: string | null | undefined):
 }
 
 const TURN_STATUS_SUFFIX_PATTERN =
-  /(?:(?:^|\n\n)(?:🟡|🟠|🔵|⚪|🔴|🟢) \*\*状态：[^\n*]+\*\*(?:\n原因：[^\n]*)?\n更新时间：<t:\d+:R>)+$/u;
+  /(?:(?:^|\n\n)(?:🔴🔴|🟡|🟠|🔵|⚪|🔴|🟢) \*\*状态：[^\n*]+\*\*(?:\n原因：[^\n]*)?\n更新时间：<t:\d+:R>)+$/u;
 
 export function replaceTurnStatusSuffix(content: string, statusText: string | null): string {
   const base = content.replace(TURN_STATUS_SUFFIX_PATTERN, "").trimEnd();
@@ -293,7 +301,7 @@ export function formatDiscordChannelName(name: string, fallback: string): string
   return Array.from(normalized).slice(0, 100).join("").replace(/-+$/g, "");
 }
 
-const DISCORD_CHANNEL_STATUS_PREFIX = /^(🟡|🔴|🟢|⚪)-/u;
+const DISCORD_CHANNEL_STATUS_PREFIX = /^(🔴🔴|🟡|🔴|🟢|⚪)-/u;
 
 export function formatPausedDiscordChannelName(name: string, fallback = "codex-paused"): string {
   const baseName = formatDiscordChannelName(
@@ -322,6 +330,14 @@ export function formatDiscordChannelStatusName(
         ? "🔴"
         : "🟡";
   return Array.from(`${indicator}-${baseName}`).slice(0, 100).join("").replace(/-+$/g, "");
+}
+
+export function formatDisconnectedDiscordChannelName(name: string, fallback: string): string {
+  const baseName = formatDiscordChannelName(
+    name.replace(DISCORD_CHANNEL_STATUS_PREFIX, ""),
+    fallback
+  );
+  return Array.from(`🔴🔴-${baseName}`).slice(0, 100).join("").replace(/-+$/g, "");
 }
 
 export function preserveDiscordChannelStatusPrefix(

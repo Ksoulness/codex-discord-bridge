@@ -40,7 +40,7 @@ test("forked top-level conversations are not classified as subagents", async () 
         type: "session_meta",
         payload: {
           id: threadId,
-          cwd: "C:\\workspace\\sample-dashboard",
+          cwd: "E:\\Code\\poly-market",
           originator: "Codex Desktop",
           source: "vscode",
           forked_from_id: parentThreadId
@@ -77,7 +77,7 @@ test("recent local thread discovery includes rollout paths indexed by the Codex 
       buildJsonLine({
         timestamp: new Date().toISOString(),
         type: "session_meta",
-        payload: { id: threadId, cwd: "C:\\workspace\\sample-dashboard", originator: "Codex Desktop" }
+        payload: { id: threadId, cwd: "E:\\Code\\poly-market", originator: "Codex Desktop" }
       }),
       buildJsonLine({
         timestamp: new Date().toISOString(),
@@ -112,7 +112,7 @@ test("recent local thread discovery keeps an active task ahead of newer idle tas
         buildJsonLine({
           timestamp,
           type: "session_meta",
-          payload: { id: threadId, cwd: "C:\\workspace\\sample-dashboard", originator: "Codex Desktop" }
+          payload: { id: threadId, cwd: "E:\\Code\\poly-market", originator: "Codex Desktop" }
         }),
         buildJsonLine({
           timestamp,
@@ -144,7 +144,7 @@ test("recent local thread discovery ignores non-task log lines after task comple
       buildJsonLine({
         timestamp: "2026-07-18T01:00:00.000Z",
         type: "session_meta",
-        payload: { id: threadId, cwd: "C:\\workspace\\sample-dashboard", originator: "Codex Desktop" }
+        payload: { id: threadId, cwd: "E:\\Code\\poly-market", originator: "Codex Desktop" }
       }),
       buildJsonLine({
         timestamp: "2026-07-18T01:01:00.000Z",
@@ -181,7 +181,7 @@ test("state database discovery exposes recent task metadata without a rollout fi
     .run(
       "019f-strategy-state-only",
       "策略",
-      "C:\\workspace\\sample-dashboard",
+      "E:\\Code\\poly-market",
       "2026-07-18T10:00:00.000Z",
       "active"
     );
@@ -192,7 +192,7 @@ test("state database discovery exposes recent task metadata without a rollout fi
     {
       threadId: "019f-strategy-state-only",
       name: "策略",
-      cwd: "C:\\workspace\\sample-dashboard",
+      cwd: "E:\\Code\\poly-market",
       createdAtMs: null,
       updatedAtMs: Date.parse("2026-07-18T10:00:00.000Z"),
       status: "active"
@@ -1100,7 +1100,7 @@ test("fastForwardThread restores the mirrored turn context for the first post-st
           call_id: "call_fast_forward_command",
           arguments: JSON.stringify({
             command: "Get-Date -Format o",
-            workdir: "C:\\Users\\TestUser\\Desktop\\projects\\codex-mobile"
+            workdir: "C:\\Users\\Natale\\Desktop\\projects\\codex-mobile"
           })
         }
       }),
@@ -1208,7 +1208,7 @@ test("replayThreadFromFrontier preserves startup-window same-turn commentary and
           call_id: "call_frontier_replay_command",
           arguments: JSON.stringify({
             command: "Get-Date -Format o",
-            workdir: "C:\\Users\\TestUser\\Desktop\\projects\\codex-mobile"
+            workdir: "C:\\Users\\Natale\\Desktop\\projects\\codex-mobile"
           })
         }
       }),
@@ -1534,7 +1534,7 @@ test("recent local thread discovery keeps child session metadata when inherited 
         payload: {
           id: childThreadId,
           timestamp: "2026-04-19T06:25:56.994Z",
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\codex-mobile",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\codex-mobile",
           originator: "Codex Desktop",
           source: {
             subagent: {
@@ -1567,7 +1567,7 @@ test("recent local thread discovery keeps child session metadata when inherited 
         payload: {
           id: parentThreadId,
           timestamp: "2026-04-18T09:26:41.000Z",
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\codex-mobile",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\codex-mobile",
           originator: "Codex Desktop"
         }
       })
@@ -1616,7 +1616,7 @@ test("recent local thread discovery exposes guardian subagent source metadata", 
         payload: {
           id: threadId,
           timestamp: "2026-04-25T05:04:00.000Z",
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\codex-mobile",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\codex-mobile",
           originator: "Codex Desktop",
           source: {
             subagent: {
@@ -1677,7 +1677,7 @@ test("recent local thread discovery ignores archived session files", async () =>
         type: "session_meta",
         payload: {
           id: activeThreadId,
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\active-repo",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\active-repo",
           originator: "codex-tui"
         }
       }),
@@ -1700,7 +1700,7 @@ test("recent local thread discovery ignores archived session files", async () =>
         type: "session_meta",
         payload: {
           id: archivedThreadId,
-          cwd: "C:\\Users\\TestUser\\Desktop\\projects\\archived-repo",
+          cwd: "C:\\Users\\Natale\\Desktop\\projects\\archived-repo",
           originator: "codex-tui"
         }
       }),

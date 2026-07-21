@@ -26,6 +26,10 @@ export class LocalStoreProvider implements BridgeProvider {
   private readonly subagentThreads = new Map<string, { id: string; parentChannelId: string }>();
   public monitorPanelView: DiscordCommandResult | null = null;
   public monitorPanelEnsureCalls = 0;
+  public reorderedLocations: {
+    projectCategoryIds: string[];
+    conversationChannelIdsByCategory: Array<{ categoryId: string; channelIds: string[] }>;
+  } | null = null;
 
   async start(
     _handlers: BridgeProviderHandlers,
@@ -107,6 +111,16 @@ export class LocalStoreProvider implements BridgeProvider {
 
   async countConversationChannelsInCategory(categoryId: string): Promise<number> {
     return [...this.conversationChannels.values()].filter((channel) => channel.categoryId === categoryId).length;
+  }
+
+  async reorderManagedLocations(input: {
+    projectCategoryIds: string[];
+    conversationChannelIdsByCategory: Array<{
+      categoryId: string;
+      channelIds: string[];
+    }>;
+  }): Promise<void> {
+    this.reorderedLocations = input;
   }
 
   async deleteDiscordLocation(channelId: string, _reason: string): Promise<void> {

@@ -128,3 +128,16 @@ test("cleanup refuses active or selected conversations", async () => {
   assert.ok(fixture.store.getThreadBridge("thr_1"));
   fixture.store.close();
 });
+
+test("cleanup deletes an unselected Discord mapping left active by a discovery race", async () => {
+  const fixture = createFixture();
+  fixture.store.setMonitorThreadSelected("thr_1", false, "user_1");
+
+  const deleted = await fixture.lifecycle.cleanPausedThreads(["thr_1"], "user_1");
+
+  assert.equal(deleted, 1);
+  assert.deepEqual(fixture.provider.deletedLocationIds, ["discord_1"]);
+  assert.equal(fixture.store.getThreadBridge("thr_1"), undefined);
+  assert.equal(fixture.store.getMonitorThread("thr_1")?.pausedDiscordChannelId, null);
+  fixture.store.close();
+});

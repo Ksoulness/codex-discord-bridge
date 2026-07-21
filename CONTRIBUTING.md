@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in Codex Discord Bridge.
+Thanks for your interest in `codex-mobile`.
 
 ## Public beta policy
 

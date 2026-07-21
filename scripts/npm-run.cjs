@@ -47,7 +47,7 @@ function execute(argv = process.argv.slice(2), options = {}) {
   const indexJs = path.join(repoRoot, "dist", "src", "index.js");
   const initJs = path.join(repoRoot, "dist", "src", "init.js");
   const doctorJs = path.join(repoRoot, "dist", "src", "doctor.js");
-  const testRunnerJs = path.join(repoRoot, "scripts", "run-tests.cjs");
+  const testRunnerJs = path.join(repoRoot, "dist", "test", "run.js");
   const e2eLiveJs = path.join(repoRoot, "scripts", "e2e-live.cjs");
   const tsconfigPath = path.join(repoRoot, "tsconfig.json");
   const coreCoverageIncludes = [
@@ -91,13 +91,14 @@ function execute(argv = process.argv.slice(2), options = {}) {
   }
 
   function runCoverage(mode = "report") {
-    const args = [testRunnerJs, "--coverage"];
+    const args = ["--experimental-test-coverage"];
     if (mode === "gate") {
-      args.push("--coverage-lines=80");
+      args.push("--test-coverage-lines=80");
       for (const include of coreCoverageIncludes) {
-        args.push("--coverage-include", include);
+        args.push("--test-coverage-include", include);
       }
     }
+    args.push(testRunnerJs);
     return run(nodeBin, args);
   }
 
@@ -180,7 +181,7 @@ function execute(argv = process.argv.slice(2), options = {}) {
       if (buildCode !== 0) {
         return buildCode;
       }
-      return run(nodeBin, [testRunnerJs]);
+      return runNode(testRunnerJs);
     }
     default:
       writeError(`Unknown action: ${action}`);

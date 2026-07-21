@@ -89,6 +89,11 @@ export interface BridgeProviderHandlers {
     customId: string,
     values: string[]
   ): Promise<DiscordCommandResult>;
+  onMonitorAutomaticSettings?(
+    actor: ProviderActorContext,
+    projectLimit: number,
+    threadLimit: number
+  ): Promise<DiscordCommandResult>;
   onApprovalDetails(actor: ProviderActorContext, token: string): Promise<DiscordCommandResult>;
   onApprovalAction(
     actor: ProviderActorContext,
@@ -154,6 +159,13 @@ export interface BridgeProvider {
     operationContext?: ProviderOperationContext
   ): Promise<{ id: string; created: boolean }>;
   countConversationChannelsInCategory(categoryId: string): Promise<number>;
+  reorderManagedLocations?(input: {
+    projectCategoryIds: string[];
+    conversationChannelIdsByCategory: Array<{
+      categoryId: string;
+      channelIds: string[];
+    }>;
+  }): Promise<void>;
   deleteDiscordLocation(channelId: string, reason: string): Promise<void>;
   discoverBridgeManagedLocations(seedCategoryIds: string[], options?: {
     restrictToSeedCategories?: boolean;

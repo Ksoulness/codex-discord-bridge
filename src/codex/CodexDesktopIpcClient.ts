@@ -43,6 +43,7 @@ export interface DesktopIpcApprovalRemovedSnapshot {
 
 export interface DesktopIpcEvents {
   ready: [];
+  availabilityChanged: [boolean];
   conversationStateChanged: [string, DesktopConversationState];
   requestUpserted: [DesktopIpcApprovalRequestSnapshot];
   requestRemoved: [DesktopIpcApprovalRemovedSnapshot];
@@ -83,6 +84,10 @@ export class CodexDesktopIpcClient extends EventEmitter {
     return this.socket !== null && this.clientId !== null && !this.socket.destroyed;
   }
 
+  isDesktopAvailable(): boolean {
+    return this.isReady() && this.ownerClientIdsByThread.size > 0;
+  }
+
   canStartTurnInDesktopThread(threadId: string): boolean {
     return this.isReady() && this.getOwnerClientId(threadId) !== null;
   }
@@ -104,6 +109,7 @@ export class CodexDesktopIpcClient extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    const wasDesktopAvailable = this.isDesktopAvailable();
     this.clientId = null;
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timer);
@@ -116,6 +122,7 @@ export class CodexDesktopIpcClient extends EventEmitter {
     this.ownerClientIdsByThread.clear();
     this.requestsByThread.clear();
     this.buffer = Buffer.alloc(0);
+    this.emitDesktopAvailabilityChange(wasDesktopAvailable);
 
     const socket = this.socket;
     this.socket = null;
@@ -401,6 +408,8 @@ export class CodexDesktopIpcClient extends EventEmitter {
       return;
     }
 
+    const wasDesktopAvailable = this.isDesktopAvailable();
+
     if (
       this.pendingSteerRequestsById.size > 0 ||
       this.conversationStatesByThread.size > 0 ||
@@ -441,6 +450,7 @@ export class CodexDesktopIpcClient extends EventEmitter {
     this.ownerClientIdsByThread.clear();
     this.requestsByThread.clear();
     this.buffer = Buffer.alloc(0);
+    this.emitDesktopAvailabilityChange(wasDesktopAvailable);
     this.emit("exited", error);
   }
 
@@ -575,9 +585,55 @@ export class CodexDesktopIpcClient extends EventEmitter {
       return;
     }
 
+    if (type === "broadcast" && frame.method === "client-status-changed") {
+      this.handleClientStatusChanged(frame);
+      return;
+    }
+
     if (type === "broadcast" && frame.method === "thread-stream-state-changed") {
       this.handleThreadStreamStateChanged(frame);
     }
+  }
+
+  private handleClientStatusChanged(frame: JsonFrame): void {
+    const params = frame.params;
+    if (!params || typeof params !== "object") {
+      return;
+    }
+
+    const clientId = typeof (params as { clientId?: unknown }).clientId === "string"
+      ? String((params as { clientId: string }).clientId)
+      : null;
+    const status = typeof (params as { status?: unknown }).status === "string"
+      ? String((params as { status: string }).status)
+      : null;
+    if (!clientId || status !== "disconnected") {
+      return;
+    }
+
+    const wasDesktopAvailable = this.isDesktopAvailable();
+    const disconnectedThreadIds = [...this.ownerClientIdsByThread.entries()]
+      .filter(([, ownerClientId]) => ownerClientId === clientId)
+      .map(([threadId]) => threadId);
+    if (disconnectedThreadIds.length === 0) {
+      return;
+    }
+
+    for (const threadId of disconnectedThreadIds) {
+      this.ownerClientIdsByThread.delete(threadId);
+      this.conversationStatesByThread.delete(threadId);
+      this.requestsByThread.delete(threadId);
+    }
+    this.logger.info(
+      {
+        scope: "ipc",
+        clientId,
+        disconnectedThreadCount: disconnectedThreadIds.length,
+        remainingOwnerCount: this.ownerClientIdsByThread.size
+      },
+      withLogScope("ipc", "Codex Desktop owner disconnected; cleared cached thread ownership.")
+    );
+    this.emitDesktopAvailabilityChange(wasDesktopAvailable);
   }
 
   private handleThreadStreamStateChanged(frame: JsonFrame): void {
@@ -599,12 +655,14 @@ export class CodexDesktopIpcClient extends EventEmitter {
       return;
     }
 
+    const wasDesktopAvailable = this.isDesktopAvailable();
     const sourceClientId =
       typeof frame.sourceClientId === "string" && frame.sourceClientId.trim().length > 0
         ? frame.sourceClientId
         : null;
     if (sourceClientId) {
       this.ownerClientIdsByThread.set(threadId, sourceClientId);
+      this.emitDesktopAvailabilityChange(wasDesktopAvailable);
     }
     const pendingSteer = this.pendingSteerRequestsByThread.get(threadId);
     if (pendingSteer) {
@@ -672,6 +730,13 @@ export class CodexDesktopIpcClient extends EventEmitter {
     }
     this.conversationStatesByThread.set(threadId, nextConversationState);
     this.emit("conversationStateChanged", threadId, structuredClone(nextConversationState) as DesktopConversationState);
+  }
+
+  private emitDesktopAvailabilityChange(previousAvailability: boolean): void {
+    const nextAvailability = this.isDesktopAvailable();
+    if (nextAvailability !== previousAvailability) {
+      this.emit("availabilityChanged", nextAvailability);
+    }
   }
 
   private computeNextConversationState(

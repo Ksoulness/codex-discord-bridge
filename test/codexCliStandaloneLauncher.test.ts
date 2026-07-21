@@ -40,23 +40,23 @@ test("shouldInjectStandaloneCodexRemote only targets interactive CLI entrypoints
 });
 
 test("rewriteStandaloneCodexRemoteArgs injects caller cwd and resolves relative cd arguments", () => {
-  assert.deepEqual(rewriteStandaloneCodexRemoteArgs(["count", "to", "5"], "C:\\Users\\TestUser\\Desktop\\projects\\test3"), [
+  assert.deepEqual(rewriteStandaloneCodexRemoteArgs(["count", "to", "5"], "C:\\Users\\Natale\\Desktop\\projects\\test3"), [
     "-C",
-    "C:\\Users\\TestUser\\Desktop\\projects\\test3",
+    "C:\\Users\\Natale\\Desktop\\projects\\test3",
     "count",
     "to",
     "5"
   ]);
-  assert.deepEqual(rewriteStandaloneCodexRemoteArgs(["-C", ".", "count", "to", "5"], "C:\\Users\\TestUser\\Desktop\\projects\\test3"), [
+  assert.deepEqual(rewriteStandaloneCodexRemoteArgs(["-C", ".", "count", "to", "5"], "C:\\Users\\Natale\\Desktop\\projects\\test3"), [
     "-C",
-    "C:\\Users\\TestUser\\Desktop\\projects\\test3",
+    "C:\\Users\\Natale\\Desktop\\projects\\test3",
     "count",
     "to",
     "5"
   ]);
   assert.deepEqual(
-    rewriteStandaloneCodexRemoteArgs(["--cd=..\\test4", "count", "to", "5"], "C:\\Users\\TestUser\\Desktop\\projects\\test3"),
-    ["--cd=C:\\Users\\TestUser\\Desktop\\projects\\test4", "count", "to", "5"]
+    rewriteStandaloneCodexRemoteArgs(["--cd=..\\test4", "count", "to", "5"], "C:\\Users\\Natale\\Desktop\\projects\\test3"),
+    ["--cd=C:\\Users\\Natale\\Desktop\\projects\\test4", "count", "to", "5"]
   );
 });
 

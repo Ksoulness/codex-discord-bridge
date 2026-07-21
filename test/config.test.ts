@@ -475,3 +475,4 @@ test("loadConfig fails closed when Discord message write-backs are enabled witho
     /DISCORD_CONTROLLER_USER_ID/i
   );
 });
+

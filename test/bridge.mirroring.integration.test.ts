@@ -108,7 +108,7 @@ test("bridge mirrors live Codex agent messages into the Discord chat stream", as
         item: {
           type: "agentMessage",
           id: "msg_1",
-          text: "Hello from Codex. Final answer. See (/C:/Users/TestUser/Desktop/projects/codex-mobile/src/bridge/BridgeService.ts)."
+          text: "Hello from Codex. Final answer. See (/C:/Users/Natale/Desktop/projects/codex-mobile/src/bridge/BridgeService.ts)."
         }
       }
     });
@@ -125,7 +125,7 @@ test("bridge mirrors live Codex agent messages into the Discord chat stream", as
     assert.equal(finalMessage?.action, "edit");
     assert.match(finalMessage?.content ?? "", /^# .*?\*\*Codex\*\*/);
     assert.match(finalMessage?.content ?? "", /\*BridgeService\.ts\*/);
-    assert.doesNotMatch(finalMessage?.content ?? "", /\/C:\/Users\/TestUser/i);
+    assert.doesNotMatch(finalMessage?.content ?? "", /\/C:\/Users\/Natale/i);
     assert.equal(discord.milestoneMessages.length, 0);
   } finally {
     await bridge.stop();
@@ -849,7 +849,7 @@ test("discovery does not attach recent local sub-agent session threads before ap
       createdAtMs: nowMs - 1_000,
       updatedAtMs: nowMs,
       status: "active",
-      filePath: "C:\\Users\\TestUser\\.codex\\sessions\\child.jsonl",
+      filePath: "C:\\Users\\Natale\\.codex\\sessions\\child.jsonl",
       sourceKind: "app-server",
       parentThreadId: "thr_parent_local_subagent",
       actorName: "Darwin"
@@ -2504,7 +2504,7 @@ test("bridge mirrors completed user messages into the Discord chat stream", asyn
           content: [
             {
               type: "text",
-              text: "Please review the onboarding flow in (/C:/Users/TestUser/Desktop/projects/codex-mobile/test/bridge.integration.test.ts)."
+              text: "Please review the onboarding flow in (/C:/Users/Natale/Desktop/projects/codex-mobile/test/bridge.integration.test.ts)."
             }
           ]
         }
@@ -2517,7 +2517,7 @@ test("bridge mirrors completed user messages into the Discord chat stream", asyn
     assert.match(mirrored, /^# .*?\*\*You\*\*\n\[[0-9:]{8}\] Please review the onboarding flow/i);
     assert.doesNotMatch(mirrored, /^# .*onboarding flow.*$/m);
     assert.match(mirrored, /\*bridge\.integration\.test\.ts\*/);
-    assert.doesNotMatch(mirrored, /\/C:\/Users\/TestUser/i);
+    assert.doesNotMatch(mirrored, /\/C:\/Users\/Natale/i);
   } finally {
     await bridge.stop();
   }
@@ -2616,7 +2616,7 @@ test("a Discord-origin image message ignores Codex image markers during Bot You 
     lastStatusType: "idle",
     channelKind: "conversation"
   });
-  const localImagePath = "C:\\workspace\\codex-mobile\\data\\discord-images\\message.png";
+  const localImagePath = "E:\\Code\\codex-mobile\\data\\discord-images\\message.png";
   const writeBack = store.createWriteBackQueueItem({
     threadId: "thr_discord_image_origin",
     discordChannelId: "discord_channel_thr_discord_image_origin",
@@ -3084,3 +3084,4 @@ test("turn status follows Codex commentary and keeps the final result", async ()
     await bridge.stop();
   }
 });
+

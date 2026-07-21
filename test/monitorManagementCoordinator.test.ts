@@ -19,7 +19,8 @@ function createFixture(
     displayName: string;
     defaultReasoningEffort: string | null;
     supportedReasoningEfforts: string[];
-  }>>
+  }>>,
+  refreshManagedState?: () => Promise<void>
 ) {
   const dir = mkdtempSync(path.join(tmpdir(), "codex-monitor-management-"));
   const store = new StateStore(path.join(dir, "bridge.sqlite"));
@@ -29,6 +30,7 @@ function createFixture(
   const paused: string[] = [];
   const cleaned: string[][] = [];
   const refreshCalls: number[] = [];
+  const managedRefreshCalls: number[] = [];
   const lifecycle = {
     async pauseThread(threadId: string, actorUserId: string, options: { preserveSelection?: boolean } = {}) {
       paused.push(threadId);
@@ -75,7 +77,12 @@ function createFixture(
         defaultReasoningEffort: "medium",
         supportedReasoningEfforts: ["low", "medium", "high", "xhigh"]
       }
-    ]
+    ],
+    null,
+    async () => {
+      managedRefreshCalls.push(Date.now());
+      await refreshManagedState?.();
+    }
   );
   const record = (threadId: string, projectKey = "c:\\repo", projectName = "repo") => {
     store.upsertDiscoveredMonitorThread({
@@ -86,7 +93,18 @@ function createFixture(
       lastSeenAt: new Date().toISOString()
     });
   };
-  return { store, provider, selection, coordinator, resumed, paused, cleaned, refreshCalls, record };
+  return {
+    store,
+    provider,
+    selection,
+    coordinator,
+    resumed,
+    paused,
+    cleaned,
+    refreshCalls,
+    managedRefreshCalls,
+    record
+  };
 }
 
 test("project and conversation pickers render from the current inventory while refresh runs in the background", async () => {
@@ -228,12 +246,54 @@ test("manage returns a complete private control panel at the command location", 
   assert.equal(result.ephemeral, true);
   assert.match(result.content, /Codex/);
   assert.equal(result.buttons?.length, 5);
+  assert.ok(result.buttons?.some((button) => button.customId.startsWith("codex:monitor:auto-settings:")));
   assert.ok(result.buttons?.some((button) => button.customId === "codex:monitor:projects:0"));
   assert.ok(result.buttons?.some((button) => button.customId === "codex:monitor:thread-projects:0"));
   assert.equal(result.selectMenus?.[0]?.customId, "codex:monitor:window");
   assert.equal(result.selectMenus?.[0]?.options.find((option) => option.default)?.value, "24");
-  assert.ok(result.buttons?.some((button) => button.label === "删除停用频道"));
+  assert.ok(!result.buttons?.some((button) => button.label === "删除停用频道"));
+  assert.match(result.content, /每 10 分钟自动执行/);
   assert.ok(result.buttons?.some((button) => button.customId === "codex:monitor:default-model"));
+  fixture.store.close();
+});
+
+test("cleanup picker includes stopped copies from disabled projects and stale active mappings", async () => {
+  const fixture = createFixture();
+  fixture.record("paused_thread", "c:\\disabled", "disabled");
+  fixture.record("stale_mapping", "c:\\disabled", "disabled");
+  fixture.store.setMonitorThreadSelected("paused_thread", true, actor.userId);
+  fixture.store.setMonitorThreadPausedDiscordChannelId("paused_thread", "discord_paused");
+  fixture.store.upsertThreadBridge({
+    codexThreadId: "stale_mapping",
+    parentCodexThreadId: null,
+    projectKey: "c:\\disabled",
+    projectName: "disabled",
+    discordChannelId: "discord_stale",
+    discordParentChannelId: null,
+    statusMessageId: null,
+    cwd: "C:\\disabled",
+    repoName: "disabled",
+    lastSeenAt: new Date().toISOString(),
+    attachMode: "manual",
+    threadName: "stale_mapping",
+    lastStatusType: "idle",
+    channelKind: "conversation"
+  });
+  const project = fixture.store.getMonitorProject("c:\\disabled");
+  assert.ok(project);
+
+  const projects = await fixture.coordinator.handleButton(actor, "codex:monitor:cleanup-projects:0");
+  assert.ok(projects.selectMenus?.[0]?.options.some((option) => option.value === project.projectToken));
+
+  const threads = await fixture.coordinator.handleSelect(
+    actor,
+    "codex:monitor:cleanup-project:0",
+    [project.projectToken]
+  );
+  assert.deepEqual(
+    new Set(threads.selectMenus?.[0]?.options.map((option) => option.value)),
+    new Set(["paused_thread", "stale_mapping"])
+  );
   fixture.store.close();
 });
 
@@ -260,13 +320,39 @@ test("management saves the default model used by future Discord-created threads"
   fixture.store.close();
 });
 
-test("refresh button starts inventory reload in the background", async () => {
-  const fixture = createFixture();
+test("refresh button starts a complete monitor refresh in the background", async () => {
+  const order: string[] = [];
+  const fixture = createFixture(
+    undefined,
+    async () => {
+      order.push("inventory");
+      return 37;
+    },
+    undefined,
+    async () => {
+      order.push("managed-state");
+    }
+  );
 
   const result = await fixture.coordinator.handleButton(actor, "codex:monitor:refresh");
+  await new Promise((resolve) => setTimeout(resolve, 10));
 
   assert.equal(fixture.refreshCalls.length, 1);
-  assert.match(result.content, /后台刷新/);
+  assert.equal(fixture.managedRefreshCalls.length, 1);
+  assert.deepEqual(order, ["inventory", "managed-state"]);
+  assert.match(result.content, /分类、频道、对话和状态灯/);
+  fixture.store.close();
+});
+
+test("complete refresh deletes stopped Discord copies without a separate cleanup action", async () => {
+  const fixture = createFixture();
+  fixture.record("thr_stopped");
+  fixture.store.setMonitorThreadPausedDiscordChannelId("thr_stopped", "discord_stopped");
+
+  await fixture.coordinator.handleButton(actor, "codex:monitor:refresh");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(fixture.cleaned, [["thr_stopped"]]);
   fixture.store.close();
 });
 
@@ -285,7 +371,7 @@ test("monitor buttons respond even when the inventory refresh never returns", as
     fixture.coordinator.handleButton(actor, "codex:monitor:refresh"),
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("refresh button did not respond")), 100))
   ]);
-  assert.match(refresh.content, /后台刷新/);
+  assert.match(refresh.content, /后台.*刷新/);
   fixture.store.close();
 });
 
@@ -319,5 +405,31 @@ test("management active-window selection persists and refreshes the panel", asyn
   assert.equal(fixture.selection.getActiveWindowHours(), 12);
   assert.equal(fixture.coordinator.buildPanelView().selectMenus?.[0]?.options.find((option) => option.default)?.value, "12");
   assert.equal(fixture.store.listMonitorAudit(1)[0]?.action, "set_active_window");
+  fixture.store.close();
+});
+
+test("automatic settings switch the panel to automatic mode and manual switch freezes selection", async () => {
+  const fixture = createFixture();
+  fixture.record("thr_1");
+
+  const enabled = await fixture.coordinator.handleAutomaticSettings(actor, 5, 4);
+  assert.match(enabled.content, /最近 5 个项目，每个项目最近 4 个对话/);
+  assert.deepEqual(fixture.selection.getManagementSettings(), {
+    mode: "automatic",
+    projectLimit: 5,
+    threadLimit: 4
+  });
+  const automaticPanel = fixture.coordinator.buildPanelView();
+  assert.match(automaticPanel.content, /当前模式：自动管理/);
+  assert.equal(automaticPanel.selectMenus?.length, 0);
+  assert.ok(automaticPanel.buttons?.some((button) => button.customId === "codex:monitor:manual"));
+  assert.ok(!automaticPanel.buttons?.some((button) => button.customId === "codex:monitor:projects:0"));
+
+  const blocked = await fixture.coordinator.handleButton(actor, "codex:monitor:projects:0");
+  assert.match(blocked.content, /当前是自动管理模式/);
+
+  const manual = await fixture.coordinator.handleButton(actor, "codex:monitor:manual");
+  assert.match(manual.content, /当前项目和对话保持原样/);
+  assert.equal(fixture.selection.getManagementSettings().mode, "manual");
   fixture.store.close();
 });

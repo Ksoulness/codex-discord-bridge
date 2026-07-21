@@ -74,8 +74,8 @@ test("monitor inventory removes unselected subagents and keeps the current top-l
   const nowSeconds = Math.floor(Date.now() / 1000);
   store.upsertDiscoveredMonitorThread({
     threadId: "child_thread",
-    projectKey: "c:\\workspace\\sample-dashboard",
-    projectName: "sample-dashboard",
+    projectKey: "e:\\code\\poly-market",
+    projectName: "poly-market",
     threadName: "Stale prompt title",
     lastSeenAt: new Date(nowSeconds * 1000).toISOString()
   });
@@ -102,13 +102,13 @@ test("monitor inventory removes unselected subagents and keeps the current top-l
     }
   ];
   codex.metadata.set("child_thread", {
-    cwd: "C:\\workspace\\sample-dashboard",
-    repoName: "sample-dashboard",
+    cwd: "E:\\Code\\poly-market",
+    repoName: "poly-market",
     parentThreadId: "parent_thread"
   });
   codex.metadata.set("strategy_thread", {
-    cwd: "C:\\workspace\\sample-dashboard",
-    repoName: "sample-dashboard",
+    cwd: "E:\\Code\\poly-market",
+    repoName: "poly-market",
     threadName: "策略优化与回测",
     parentThreadId: null
   });
@@ -123,6 +123,68 @@ test("monitor inventory removes unselected subagents and keeps the current top-l
   }
 });
 
+test("selective discovery does not refresh an existing mapping after the conversation is unselected", async () => {
+  const { store, codex, discord, bridge } = createBridgeTestRig({
+    manualMonitorSelection: true,
+    runtimeConfig: createBridgeConfigFromPreset(
+      "recommended",
+      testApprovalsConfig("user_1"),
+      { discovery: { selectiveMonitoring: true } }
+    )
+  });
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const threadId = "unselected_existing_mapping";
+  const projectKey = "e:\\code\\poly-market";
+  store.upsertDiscoveredMonitorThread({
+    threadId,
+    projectKey,
+    projectName: "poly-market",
+    threadName: "Stopped task",
+    threadStatus: "active",
+    lastSeenAt: new Date(nowSeconds * 1000).toISOString()
+  });
+  store.setMonitorProjectEnabled(projectKey, true, "test");
+  store.setMonitorThreadSelected(threadId, true, "test");
+  store.upsertThreadBridge({
+    codexThreadId: threadId,
+    parentCodexThreadId: null,
+    projectKey,
+    projectName: "poly-market",
+    discordChannelId: "discord_stopped",
+    discordParentChannelId: null,
+    statusMessageId: null,
+    cwd: "E:\\Code\\poly-market",
+    repoName: "poly-market",
+    lastSeenAt: new Date(nowSeconds * 1000).toISOString(),
+    attachMode: "manual",
+    threadName: "Stopped task",
+    lastStatusType: "idle",
+    channelKind: "conversation"
+  });
+  discord.conversationChannelIds.add("discord_stopped");
+  codex.threads = [{
+    id: threadId,
+    name: "Stopped task",
+    preview: "Stopped task",
+    modelProvider: null,
+    createdAt: nowSeconds,
+    updatedAt: nowSeconds,
+    ephemeral: false,
+    status: { type: "active" as const, activeFlags: [] }
+  }];
+  codex.metadata.set(threadId, { cwd: "E:\\Code\\poly-market", repoName: "poly-market" });
+
+  try {
+    await bridge.start({ skipDiscovery: true });
+    discord.conversationEnsureRequests.length = 0;
+    store.setMonitorThreadSelected(threadId, false, "user_1");
+    await (bridge as any).coordinators.discoveryCoordinator.runDiscoveryCycle(false);
+    assert.equal(discord.conversationEnsureRequests.length, 0);
+  } finally {
+    await bridge.stop();
+  }
+});
+
 test("selective discovery does not inherit parent selection for Discord subagent threads", async () => {
   const { store, codex, discord, bridge } = createBridgeTestRig({
     manualMonitorSelection: true
@@ -130,12 +192,12 @@ test("selective discovery does not inherit parent selection for Discord subagent
   const nowSeconds = Math.floor(Date.now() / 1000);
   const parentThreadId = "selected_parent_with_child";
   const childThreadId = "unselected_child_of_selected_parent";
-  const projectKey = "c:\\workspace\\sample-dashboard";
+  const projectKey = "e:\\code\\poly-market";
 
   store.upsertDiscoveredMonitorThread({
     threadId: parentThreadId,
     projectKey,
-    projectName: "sample-dashboard",
+    projectName: "poly-market",
     threadName: "Selected parent",
     lastSeenAt: new Date(nowSeconds * 1000).toISOString()
   });
@@ -145,12 +207,12 @@ test("selective discovery does not inherit parent selection for Discord subagent
     codexThreadId: parentThreadId,
     parentCodexThreadId: null,
     projectKey,
-    projectName: "sample-dashboard",
+    projectName: "poly-market",
     discordChannelId: "discord_selected_parent_with_child",
     discordParentChannelId: null,
     statusMessageId: null,
-    cwd: "C:\\workspace\\sample-dashboard",
-    repoName: "sample-dashboard",
+    cwd: "E:\\Code\\poly-market",
+    repoName: "poly-market",
     lastSeenAt: new Date(nowSeconds * 1000).toISOString(),
     attachMode: "manual",
     threadName: "Selected parent",
@@ -176,8 +238,8 @@ test("selective discovery does not inherit parent selection for Discord subagent
     status: { type: "active" as const, activeFlags: [] }
   }];
   codex.metadata.set(childThreadId, {
-    cwd: "C:\\workspace\\sample-dashboard",
-    repoName: "sample-dashboard",
+    cwd: "E:\\Code\\poly-market",
+    repoName: "poly-market",
     parentThreadId,
     actorName: "Peirce"
   });
@@ -235,7 +297,7 @@ test("manual monitor refresh only imports active or recently updated app-server 
     }
   ];
   for (const threadId of ["recent_thread", "old_thread", "old_active_thread"]) {
-    codex.metadata.set(threadId, { cwd: "C:\\workspace\\sample-dashboard", repoName: "sample-dashboard" });
+    codex.metadata.set(threadId, { cwd: "E:\\Code\\poly-market", repoName: "poly-market" });
   }
 
   try {
@@ -274,8 +336,8 @@ test("selective monitor refresh trusts app-server top-level conversations and pr
     status: { type: "idle" as const }
   }];
   codex.metadata.set("strategy_thread", {
-    cwd: "C:\\workspace\\sample-dashboard",
-    repoName: "sample-dashboard",
+    cwd: "E:\\Code\\poly-market",
+    repoName: "poly-market",
     parentThreadId: null
   });
   tailer.setLocalThreads([
@@ -283,8 +345,8 @@ test("selective monitor refresh trusts app-server top-level conversations and pr
       threadId: "strategy_thread",
       name: "Strategy optimization",
       preview: "Strategy optimization",
-      cwd: "C:\\workspace\\sample-dashboard",
-      repoName: "sample-dashboard",
+      cwd: "E:\\Code\\poly-market",
+      repoName: "poly-market",
       createdAtMs: (nowSeconds - 60) * 1000,
       updatedAtMs: (nowSeconds - 60) * 1000,
       status: "idle" as const,
@@ -297,8 +359,8 @@ test("selective monitor refresh trusts app-server top-level conversations and pr
       threadId: "mid_turn_prompt",
       name: "A mid-turn instruction",
       preview: "A mid-turn instruction",
-      cwd: "C:\\workspace\\sample-dashboard",
-      repoName: "sample-dashboard",
+      cwd: "E:\\Code\\poly-market",
+      repoName: "poly-market",
       createdAtMs: (nowSeconds - 120) * 1000,
       updatedAtMs: (nowSeconds - 120) * 1000,
       status: "idle" as const,
@@ -311,8 +373,8 @@ test("selective monitor refresh trusts app-server top-level conversations and pr
   for (const threadId of ["mid_turn_prompt", "selected_history", "paused_copy"]) {
     store.upsertDiscoveredMonitorThread({
       threadId,
-      projectKey: "c:\\workspace\\sample-dashboard",
-      projectName: "sample-dashboard",
+      projectKey: "e:\\code\\poly-market",
+      projectName: "poly-market",
       threadName: threadId,
       lastSeenAt: new Date((nowSeconds - 120) * 1000).toISOString()
     });
@@ -344,12 +406,12 @@ test("selected unmapped conversations omitted from the recent list recover by ex
     )
   });
   const threadId = "019f75bc-0381-7fe0-8f0f-20ab53ae38f8";
-  const projectKey = "c:\\workspace\\sample-dashboard";
+  const projectKey = "e:\\code\\poly-market";
   const oldSeconds = Math.floor(Date.now() / 1000) - 24 * 60 * 60;
   store.upsertDiscoveredMonitorThread({
     threadId,
     projectKey,
-    projectName: "sample-dashboard",
+    projectName: "poly-market",
     threadName: "策略",
     threadStatus: "idle",
     lastSeenAt: new Date(oldSeconds * 1000).toISOString()
@@ -368,8 +430,8 @@ test("selected unmapped conversations omitted from the recent list recover by ex
     status: { type: "idle" as const }
   });
   codex.metadata.set(threadId, {
-    cwd: "C:\\workspace\\sample-dashboard",
-    repoName: "sample-dashboard",
+    cwd: "E:\\Code\\poly-market",
+    repoName: "poly-market",
     parentThreadId: "019f6dfd-543d-7761-9808-169465c59d5d"
   });
 
@@ -1081,7 +1143,7 @@ test("live discovery does not block on slow queued session mirroring", async () 
 
     const completed = await Promise.race([
       (bridge as any).runDiscoveryCycle(false).then(() => "completed"),
-      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 500))
+      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 50))
     ]);
 
     assert.equal(completed, "completed");
@@ -1342,3 +1404,4 @@ test("scoped mapped-only clean does not trust polluted mapped channel ids outsid
     await bridge.stop();
   }
 });
+

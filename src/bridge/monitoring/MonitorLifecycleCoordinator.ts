@@ -120,20 +120,43 @@ export class MonitorLifecycleCoordinator {
     return this.serialize(async () => {
       for (const threadId of [...new Set(threadIds)]) {
         const monitor = this.store.getMonitorThread(threadId);
+        const bridge = this.store.getThreadBridge(threadId);
         const projectEnabled = monitor
           ? this.store.getMonitorProject(monitor.projectKey)?.enabled === true
           : false;
         if (
-          !monitor?.pausedDiscordChannelId ||
-          this.store.getThreadBridge(threadId) ||
+          !monitor ||
+          (!monitor.pausedDiscordChannelId && !bridge) ||
           (monitor.selected && projectEnabled)
         ) {
           continue;
         }
-        await this.provider.deleteDiscordLocation(
-          monitor.pausedDiscordChannelId,
-          "Delete stopped Codex Discord mirror"
-        );
+
+        const locationIds = new Set<string>();
+        if (monitor.pausedDiscordChannelId) {
+          locationIds.add(monitor.pausedDiscordChannelId);
+        }
+        if (bridge) {
+          const descendants = this.collectDescendantBridgeIds(threadId);
+          const mappedThreadIds = [threadId, ...descendants];
+          await this.deps.drainThreadEventQueue(mappedThreadIds);
+          for (const mappedThreadId of mappedThreadIds) {
+            await this.deps.fastForwardThread(mappedThreadId);
+          }
+          for (const childThreadId of descendants.reverse()) {
+            this.deps.detachMappedThread(childThreadId);
+          }
+          const detached = this.deps.detachMappedThread(threadId) ?? bridge;
+          locationIds.add(detached.discordChannelId);
+        }
+
+        for (const locationId of locationIds) {
+          await this.provider.deleteDiscordLocation(
+            locationId,
+            "Delete stopped Codex Discord mirror"
+          );
+          deletedCount += 1;
+        }
         this.store.setMonitorThreadPausedDiscordChannelId(threadId, null);
         this.store.appendMonitorAudit({
           timestamp: new Date().toISOString(),
@@ -141,9 +164,8 @@ export class MonitorLifecycleCoordinator {
           action: "clean-discord-copy",
           projectKey: monitor.projectKey,
           threadId,
-          detail: monitor.pausedDiscordChannelId
+          detail: [...locationIds].join(",")
         });
-        deletedCount += 1;
         await this.deleteEmptyProjectCategory(monitor.projectKey);
       }
     }).then(() => deletedCount);

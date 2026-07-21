@@ -4,7 +4,7 @@ import { redactSensitiveText } from "../src/util/redaction.js";
 
 test("redacts known secret patterns", () => {
   const input =
-    'Authorization: Bearer abcdefghijklmnop sk-12345678901234567890 OPENAI_API_KEY=secret C:\\workspace\\sample-user\\.codex\\auth.json';
+    'Authorization: Bearer abcdefghijklmnop sk-12345678901234567890 OPENAI_API_KEY=secret C:\\Users\\me\\.codex\\auth.json';
   const output = redactSensitiveText(input);
 
   assert.equal(output.includes("secret"), false);
@@ -14,14 +14,11 @@ test("redacts known secret patterns", () => {
 });
 
 test("redacts multiline private key blocks", () => {
-  const marker = "-----";
-  const openSshHeader = `${marker}BEGIN OPENSSH PRIVATE KEY${marker}`;
-  const openSshFooter = `${marker}END OPENSSH PRIVATE KEY${marker}`;
   const input = [
     "before",
-    openSshHeader,
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
     "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAE",
-    openSshFooter,
+    "-----END OPENSSH PRIVATE KEY-----",
     "after"
   ].join("\n");
 
@@ -33,12 +30,9 @@ test("redacts multiline private key blocks", () => {
 });
 
 test("redacts private key blocks inside JSON-stringified payloads", () => {
-  const marker = "-----";
-  const rsaHeader = `${marker}BEGIN RSA PRIVATE KEY${marker}`;
-  const rsaFooter = `${marker}END RSA PRIVATE KEY${marker}`;
   const input = JSON.stringify(
     {
-      privateKey: `${rsaHeader}\nabc123\n${rsaFooter}`
+      privateKey: "-----BEGIN RSA PRIVATE KEY-----\nabc123\n-----END RSA PRIVATE KEY-----"
     },
     null,
     2
@@ -71,7 +65,9 @@ test("redacts structured key-value secrets and cookie-style values", () => {
 });
 
 test("redacts raw Discord bot tokens", () => {
-  const token = ["MTIzNDU2Nzg5MDEyMzQ1Njc4", "GhIjKl", "mnopqrst", "uvwxyzABCDEFGHIJKLMN"].join(".").replace("mnopqrst.", "mnopqrst");
+  const tokenId = "123456789012345678901234";
+  const tokenSecret = ["mnopqrstuvwx", "yzABCDEFGHI", "JKLMNO"].join("");
+  const token = `${tokenId}.GhIjKl.${tokenSecret}`;
   const input = `discord token ${token}`;
   const output = redactSensitiveText(input);
 

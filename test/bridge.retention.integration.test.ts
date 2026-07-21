@@ -617,3 +617,4 @@ test("retention maxTurnsPerThread prunes stale subagent threads even when the pa
     await bridge.stop();
   }
 });
+

@@ -4,7 +4,9 @@ import type {
   TurnStatusMessageRecord
 } from "../../domain.js";
 import {
+  formatDisconnectedDiscordChannelName,
   formatDiscordChannelStatusName,
+  renderDesktopDisconnectedStatus,
   renderTurnStatus,
   shortThreadId,
   summarizeTurnStatusReason
@@ -33,6 +35,8 @@ export class TurnStatusCoordinator {
     string,
     { record: TurnStatusMessageRecord; requireStoredRecord: boolean }
   >();
+  private desktopConnected: boolean | null = null;
+  private desktopConnectionRefreshTail: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly context: TurnStatusContext,
@@ -121,7 +125,9 @@ export class TurnStatusCoordinator {
     }
 
     const updatedAt = this.now();
-    const statusText = renderTurnStatus(statusKind, updatedAt, errorReason, planProgress);
+    const statusText = this.desktopConnected === false
+      ? renderDesktopDisconnectedStatus(updatedAt)
+      : renderTurnStatus(statusKind, updatedAt, errorReason, planProgress);
     if (targetKind !== "fallback" && targetMessageId) {
       try {
         const updated = await this.context.provider.updateLiveTextMessageStatus(
@@ -227,6 +233,74 @@ export class TurnStatusCoordinator {
   }
 
   async reconcileStartup(): Promise<void> {
+    await this.reconcileStatuses(true);
+  }
+
+  setDesktopConnectionStatus(connected: boolean): Promise<void> {
+    const changed = this.desktopConnected !== connected;
+    this.desktopConnected = connected;
+    if (!changed) {
+      return this.desktopConnectionRefreshTail;
+    }
+
+    const refresh = this.desktopConnectionRefreshTail
+      .catch(() => undefined)
+      .then(async () => {
+        await this.reconcileStatuses(true);
+        await this.refreshAllChannelTitles();
+      });
+    this.desktopConnectionRefreshTail = refresh;
+    return refresh;
+  }
+
+  async refreshCurrentStatuses(): Promise<void> {
+    await this.reconcileStatuses(false);
+    await this.refreshAllChannelTitles();
+  }
+
+  private async refreshAllChannelTitles(): Promise<void> {
+    for (const bridge of this.context.stateStore.listThreadBridgesByKind("conversation")) {
+      this.appliedChannelNames.delete(bridge.codexThreadId);
+      const record = this.context.stateStore.getTurnStatusMessage(bridge.codexThreadId);
+      if (record) {
+        await this.refreshChannelTitle(bridge.codexThreadId);
+        continue;
+      }
+      if (this.desktopConnected === null || !bridge.discordChannelId) {
+        continue;
+      }
+      const underlyingStatusKind: TurnStatusKind =
+        bridge.lastTurnStatus === "in_progress"
+          ? "inProgress"
+          : bridge.lastTurnStatus === "completed"
+            ? "completed"
+            : "stopped";
+      const desiredName = await this.buildDesiredChannelName(
+        bridge.codexThreadId,
+        bridge.threadName,
+        underlyingStatusKind
+      );
+      try {
+        const updated = await this.context.provider.updateConversationChannelName(
+          bridge.discordChannelId,
+          desiredName
+        );
+        if (updated) {
+          this.appliedChannelNames.set(bridge.codexThreadId, {
+            channelId: bridge.discordChannelId,
+            name: desiredName
+          });
+        }
+      } catch (error) {
+        this.context.logger.warn(
+          { error, threadId: bridge.codexThreadId, desiredName },
+          "Failed to update Discord conversation channel Desktop connection status"
+        );
+      }
+    }
+  }
+
+  private async reconcileStatuses(refreshMessages: boolean): Promise<void> {
     for (const bridge of this.context.stateStore.listThreadBridgesByKind("conversation")) {
       if (!bridge.lastTurnId) {
         continue;
@@ -238,20 +312,20 @@ export class TurnStatusCoordinator {
           bridge.lastTurnId,
           existing?.turnId === bridge.lastTurnId ? existing.statusKind : "inProgress",
           {
-            refresh: true,
+            refresh: refreshMessages,
             reason: existing?.turnId === bridge.lastTurnId ? existing.errorReason : null
           }
         );
       } else if (bridge.lastTurnStatus === "completed") {
         await this.setStatus(bridge.codexThreadId, bridge.lastTurnId, "completed", {
-          refresh: true
+          refresh: refreshMessages
         });
       } else if (
         existing?.turnId === bridge.lastTurnId &&
         PRESERVED_TERMINAL_STATUS_KINDS.has(existing.statusKind)
       ) {
         await this.setStatus(bridge.codexThreadId, bridge.lastTurnId, existing.statusKind, {
-          refresh: true,
+          refresh: refreshMessages,
           reason: existing.errorReason
         });
       }
@@ -387,9 +461,9 @@ export class TurnStatusCoordinator {
     if (bridge.lastTurnId && bridge.lastTurnId !== record.turnId) {
       return;
     }
-    const desiredName = formatDiscordChannelStatusName(
-      await this.readCurrentThreadName(record.threadId, bridge.threadName),
-      `thread-${shortThreadId(record.threadId)}`,
+    const desiredName = await this.buildDesiredChannelName(
+      record.threadId,
+      bridge.threadName,
       record.statusKind
     );
     const appliedChannelName = this.appliedChannelNames.get(record.threadId);
@@ -436,6 +510,18 @@ export class TurnStatusCoordinator {
       return;
     }
     await this.scheduleChannelStatus(record, { delayMs: 0 });
+  }
+
+  private async buildDesiredChannelName(
+    threadId: string,
+    fallbackName: string | null,
+    statusKind: TurnStatusKind
+  ): Promise<string> {
+    const currentName = await this.readCurrentThreadName(threadId, fallbackName);
+    const fallback = `thread-${shortThreadId(threadId)}`;
+    return this.desktopConnected === false
+      ? formatDisconnectedDiscordChannelName(currentName, fallback)
+      : formatDiscordChannelStatusName(currentName, fallback, statusKind);
   }
 
   private async readCurrentThreadName(threadId: string, fallback: string | null): Promise<string> {

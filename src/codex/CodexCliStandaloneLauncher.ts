@@ -452,7 +452,7 @@ async function readTextFileOrNull(filePath: string): Promise<string | null> {
 export { DEFAULT_LOCAL_APP_SERVER_LISTEN_URL };
 
 function resolveRemoteCdArgument(value: string, callerCwd: string): string {
-  return path.win32.isAbsolute(value) ? value : path.win32.resolve(callerCwd, value);
+  return path.isAbsolute(value) ? value : path.resolve(callerCwd, value);
 }
 
 function hasExplicitRemoteArgument(arg: string): boolean {

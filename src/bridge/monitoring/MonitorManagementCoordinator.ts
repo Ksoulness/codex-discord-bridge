@@ -22,7 +22,7 @@ import {
 
 const MONITOR_CONTROL_SCOPE = "discord";
 const CLEANUP_REQUEST_TTL_MS = 10 * 60 * 1000;
-const PANEL_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+const SCHEDULED_REFRESH_ACTOR = "scheduled-monitor-refresh";
 const DEFAULT_NEW_THREAD_MODEL_META_KEY = "discord-new-thread-default-model";
 const DEFAULT_NEW_THREAD_REASONING_META_KEY = "discord-new-thread-default-reasoning-effort";
 const FALLBACK_NEW_THREAD_MODEL = "gpt-5.6-terra";
@@ -33,9 +33,19 @@ type LifecycleActions = Pick<
   "pauseThread" | "resumeThread" | "cleanPausedThreads"
 >;
 
+interface AutomaticMonitorActions {
+  reconcile(force?: boolean): Promise<{
+    enabled: boolean;
+    changed: boolean;
+    projectCount: number;
+    threadCount: number;
+    errors: string[];
+  }>;
+}
+
 export class MonitorManagementCoordinator {
   private lastPanelSignature: string | null = null;
-  private lastPanelReconciledAtMs = 0;
+  private fullRefreshPromise: Promise<void> | null = null;
 
   constructor(
     private readonly store: StateStore,
@@ -50,7 +60,9 @@ export class MonitorManagementCoordinator {
       displayName: string;
       defaultReasoningEffort: string | null;
       supportedReasoningEfforts: string[];
-    }>> = async () => []
+    }>> = async () => [],
+    private readonly automaticMonitor: AutomaticMonitorActions | null = null,
+    private readonly refreshManagedState: (() => Promise<void>) | null = null
   ) {}
 
   buildPanelView(): DiscordCommandResult {
@@ -59,32 +71,60 @@ export class MonitorManagementCoordinator {
     const enabledProjects = projects.filter((project) => project.enabled).length;
     const selectedThreads = threads.filter((thread) => thread.selected).length;
     const activeThreads = threads.filter((thread) => this.store.getThreadBridge(thread.threadId)).length;
-    const pausedCopies = threads.filter((thread) => thread.pausedDiscordChannelId).length;
+    const projectsByKey = new Map(projects.map((project) => [project.projectKey, project]));
+    const pausedCopies = threads.filter((thread) => {
+      const project = projectsByKey.get(thread.projectKey);
+      return project ? this.isCleanableDiscordCopy(project, thread) : false;
+    }).length;
     const activeWindowHours = this.selection.getActiveWindowHours();
     const defaultModel = this.store.getBridgeMetaValue(DEFAULT_NEW_THREAD_MODEL_META_KEY) ?? FALLBACK_NEW_THREAD_MODEL;
     const defaultReasoning = this.store.getBridgeMetaValue(DEFAULT_NEW_THREAD_REASONING_META_KEY) ?? FALLBACK_NEW_THREAD_REASONING;
+    const settings = this.selection.getManagementSettings();
+    const automatic = settings.mode === "automatic";
     return {
       content: [
         "# Codex 监控管理",
-        "只会同步你手动勾选的项目和对话。新项目、新对话默认关闭。",
-        `候选范围：最近 ${activeWindowHours} 小时内完成的对话，以及所有正在进行的对话。`,
+        automatic
+          ? `当前模式：自动管理。保留最近 ${settings.projectLimit} 个项目，每个项目最近 ${settings.threadLimit} 个对话。`
+          : "当前模式：手动管理。只同步你手动勾选的项目和对话。",
+        automatic
+          ? "按 Codex 最近回复时间自动新增、删除和排序，不设置过期时间。"
+          : `候选范围：最近 ${activeWindowHours} 小时内完成的对话，以及所有正在进行的对话。`,
         "",
         `项目：${enabledProjects}/${projects.length} 已开启`,
         `对话：${selectedThreads}/${threads.length} 已勾选，${activeThreads} 个同步中`,
-        `已停止且保留的 Discord 副本：${pausedCopies}`,
+        `已停止且待完整刷新清理的 Discord 副本：${pausedCopies}`,
         `新对话默认模型：${defaultModel} · ${defaultReasoning}`,
         "",
-        "停止监控会保留历史并显示白灯；清理只删除 Discord 副本，不影响 Codex。"
+        "完整刷新每 10 分钟自动执行，也可手动触发；手动刷新不影响定时。",
+        automatic
+          ? "自动淘汰只删除 Discord 副本和 Bridge 映射，不删除 Codex 对话、项目或文件。"
+          : "停止监控会暂时保留历史并显示白灯；下次完整刷新会删除停用的 Discord 副本。"
       ].join("\n"),
       ephemeral: false,
-      buttons: [
-        { customId: "codex:monitor:projects:0", label: "选择项目", style: "primary" },
-        { customId: "codex:monitor:thread-projects:0", label: "选择对话", style: "primary" },
-        { customId: "codex:monitor:cleanup-projects:0", label: "删除停用频道", style: "danger" },
-        { customId: "codex:monitor:default-model", label: "默认模型", style: "secondary" },
-        { customId: "codex:monitor:refresh", label: "刷新", style: "secondary" }
-      ],
-      selectMenus: [
+      buttons: automatic
+        ? [
+            { customId: "codex:monitor:manual", label: "切换为手动管理", style: "secondary" },
+            {
+              customId: `codex:monitor:auto-settings:${settings.projectLimit}:${settings.threadLimit}`,
+              label: "自动管理设置",
+              style: "primary"
+            },
+            { customId: "codex:monitor:default-model", label: "默认模型", style: "secondary" },
+            { customId: "codex:monitor:refresh", label: "刷新", style: "secondary" }
+          ]
+        : [
+            {
+              customId: `codex:monitor:auto-settings:${settings.projectLimit}:${settings.threadLimit}`,
+              label: "启用自动管理",
+              style: "primary"
+            },
+            { customId: "codex:monitor:projects:0", label: "选择项目", style: "primary" },
+            { customId: "codex:monitor:thread-projects:0", label: "选择对话", style: "primary" },
+            { customId: "codex:monitor:default-model", label: "默认模型", style: "secondary" },
+            { customId: "codex:monitor:refresh", label: "刷新", style: "secondary" }
+          ],
+      selectMenus: automatic ? [] : [
         {
           customId: "codex:monitor:window",
           placeholder: `活跃范围：最近 ${activeWindowHours} 小时`,
@@ -108,12 +148,7 @@ export class MonitorManagementCoordinator {
     const existing = this.store.getMonitorControl(MONITOR_CONTROL_SCOPE);
     const view = this.buildPanelView();
     const signature = createHash("sha256").update(JSON.stringify(view)).digest("hex");
-    if (
-      !force &&
-      existing &&
-      this.lastPanelSignature === signature &&
-      Date.now() - this.lastPanelReconciledAtMs < PANEL_RECONCILE_INTERVAL_MS
-    ) {
+    if (!force && existing && this.lastPanelSignature === signature) {
       return { channelId: existing.channelId, messageId: existing.messageId };
     }
     const result = await this.provider.ensureMonitorControlPanel({
@@ -129,7 +164,6 @@ export class MonitorManagementCoordinator {
       updatedAt: new Date().toISOString()
     });
     this.lastPanelSignature = signature;
-    this.lastPanelReconciledAtMs = Date.now();
     return result;
   }
 
@@ -154,15 +188,37 @@ export class MonitorManagementCoordinator {
     this.authorize(actor);
     const parts = this.parseCustomId(customId);
     const action = parts[0];
-    if (action === "refresh") {
-      this.refreshInventoryInBackground(true);
+    if (action === "manual") {
+      const settings = this.selection.setManualMode();
+      this.store.appendMonitorAudit({
+        timestamp: new Date().toISOString(),
+        actorUserId: actor.userId,
+        action: "set_monitor_management_mode",
+        projectKey: null,
+        threadId: null,
+        detail: settings.mode
+      });
+      await this.reconcilePanel(true);
       return {
-        content: "已在后台刷新监控清单；完成后固定管理面板会自动更新。",
+        content: "已切换为手动管理。当前项目和对话保持原样，不会自动删除。",
+        ephemeral: true
+      };
+    }
+    if (action === "refresh") {
+      this.requestFullRefresh(actor.userId);
+      return {
+        content: "已在后台完整刷新分类、频道、对话和状态灯，并清理停用的 Discord 副本。",
         ephemeral: true
       };
     }
     if (action === "default-model") {
       return this.buildDefaultModelPicker();
+    }
+    if (this.selection.getManagementSettings().mode === "automatic") {
+      return {
+        content: "当前是自动管理模式。请使用“自动管理设置”调整数量，或先切换为手动管理。",
+        ephemeral: true
+      };
     }
     if (action === "projects") {
       this.refreshInventoryInBackground(true);
@@ -191,6 +247,36 @@ export class MonitorManagementCoordinator {
     return { content: "这个监控操作已失效，请重新打开管理面板。", ephemeral: true };
   }
 
+  async handleAutomaticSettings(
+    actor: ProviderActorContext,
+    projectLimit: number,
+    threadLimit: number
+  ): Promise<DiscordCommandResult> {
+    this.authorize(actor);
+    try {
+      const settings = this.selection.setAutomaticSettings(projectLimit, threadLimit);
+      this.store.appendMonitorAudit({
+        timestamp: new Date().toISOString(),
+        actorUserId: actor.userId,
+        action: "set_monitor_management_mode",
+        projectKey: null,
+        threadId: null,
+        detail: `${settings.mode}:${settings.projectLimit}x${settings.threadLimit}`
+      });
+      this.requestFullRefresh(actor.userId);
+      await this.reconcilePanel(true);
+      return {
+        content: `已启用自动管理：最近 ${settings.projectLimit} 个项目，每个项目最近 ${settings.threadLimit} 个对话。正在后台刷新并自动同步。`,
+        ephemeral: true
+      };
+    } catch (error) {
+      return {
+        content: `自动管理设置无效：${this.errorMessage(error)}。请输入 1 到 20 的整数。`,
+        ephemeral: true
+      };
+    }
+  }
+
   async handleSelect(
     actor: ProviderActorContext,
     customId: string,
@@ -199,6 +285,16 @@ export class MonitorManagementCoordinator {
     this.authorize(actor);
     const parts = this.parseCustomId(customId);
     const action = parts[0];
+    if (
+      this.selection.getManagementSettings().mode === "automatic" &&
+      action !== "default-model" &&
+      action !== "default-reasoning"
+    ) {
+      return {
+        content: "当前是自动管理模式。请使用“自动管理设置”调整数量，或先切换为手动管理。",
+        ephemeral: true
+      };
+    }
     if (action === "window") {
       const hours = this.selection.setActiveWindowHours(Number(values[0]));
       this.store.appendMonitorAudit({
@@ -245,17 +341,90 @@ export class MonitorManagementCoordinator {
     return { content: "这个选择器已失效，请重新打开管理面板。", ephemeral: true };
   }
 
+  requestFullRefresh(actorUserId = SCHEDULED_REFRESH_ACTOR): void {
+    if (this.fullRefreshPromise) {
+      return;
+    }
+    const refresh = this.runFullRefresh(actorUserId).finally(() => {
+      if (this.fullRefreshPromise === refresh) {
+        this.fullRefreshPromise = null;
+      }
+    });
+    this.fullRefreshPromise = refresh;
+    void refresh.catch(() => undefined);
+  }
+
+  private async runFullRefresh(actorUserId: string): Promise<void> {
+    const errors: string[] = [];
+    const attempt = async (label: string, operation: (() => Promise<unknown>) | null): Promise<void> => {
+      if (!operation) {
+        return;
+      }
+      try {
+        await operation();
+      } catch (error) {
+        errors.push(`${label}: ${this.errorMessage(error)}`);
+      }
+    };
+    await attempt("inventory", this.refreshInventory);
+    if (this.selection.getManagementSettings().mode === "automatic") {
+      await attempt(
+        "automatic-selection",
+        this.automaticMonitor ? () => this.automaticMonitor!.reconcile(true) : null
+      );
+    }
+    await attempt("cleanup-before-refresh", () => this.cleanStoppedDiscordCopies(actorUserId));
+    await attempt("managed-state", this.refreshManagedState);
+    if (this.selection.getManagementSettings().mode === "automatic") {
+      await attempt(
+        "automatic-ordering",
+        this.automaticMonitor ? () => this.automaticMonitor!.reconcile(true) : null
+      );
+    }
+    await attempt("cleanup-after-refresh", () => this.cleanStoppedDiscordCopies(actorUserId));
+    await attempt("panel", () => this.reconcilePanel());
+    this.store.appendMonitorAudit({
+      timestamp: new Date().toISOString(),
+      actorUserId,
+      action: "full-refresh",
+      projectKey: null,
+      threadId: null,
+      detail: JSON.stringify({
+        steps: "inventory,locations,messages,statuses,cleanup",
+        errors
+      })
+    });
+  }
+
+  private async cleanStoppedDiscordCopies(actorUserId: string): Promise<void> {
+    const projectsByKey = new Map(
+      this.store.listMonitorProjects().map((project) => [project.projectKey, project])
+    );
+    const threadIds = this.store.listMonitorThreads()
+      .filter((thread) => {
+        const project = projectsByKey.get(thread.projectKey);
+        return project ? this.isCleanableDiscordCopy(project, thread) : false;
+      })
+      .map((thread) => thread.threadId);
+    if (threadIds.length > 0) {
+      await this.lifecycle.cleanPausedThreads(threadIds, actorUserId);
+    }
+  }
+
   private refreshInventoryInBackground(refreshPanel: boolean): void {
     if (!this.refreshInventory) return;
     void this.refreshInventory()
       .then(async () => {
-        if (refreshPanel) await this.reconcilePanel(true);
+        if (refreshPanel) await this.reconcilePanel();
+      })
+      .catch(async () => {
+        if (refreshPanel) await this.reconcilePanel().catch(() => undefined);
       })
       .catch(() => undefined);
   }
 
   private reconcilePanelInBackground(): void {
-    void this.reconcilePanel(true).catch(() => undefined);
+    void this.reconcilePanel().catch(() => undefined);
   }
 
   private async listModelsPromptly(): Promise<Array<{
@@ -387,11 +556,13 @@ export class MonitorManagementCoordinator {
     page: number,
     cleanupOnly = false
   ): DiscordCommandResult {
-    const all = this.selection.listActiveProjects().items.filter((project) => {
-      if (!project.enabled) return false;
-      if (!cleanupOnly) return true;
+    const all = (cleanupOnly
+      ? this.store.listMonitorProjects()
+      : this.selection.listActiveProjects().items
+    ).filter((project) => {
+      if (!cleanupOnly) return project.enabled;
       return this.store.listMonitorThreads(project.projectKey).some(
-        (thread) => !thread.selected && Boolean(thread.pausedDiscordChannelId)
+        (thread) => this.isCleanableDiscordCopy(project, thread)
       );
     });
     const result = this.paginate(all, page);
@@ -431,7 +602,7 @@ export class MonitorManagementCoordinator {
       return { content: "项目不存在，请刷新管理面板。", ephemeral: true };
     }
     const candidates = this.store.listMonitorThreads(project.projectKey).filter(
-      (thread) => !thread.selected && Boolean(thread.pausedDiscordChannelId) && !this.store.getThreadBridge(thread.threadId)
+      (thread) => this.isCleanableDiscordCopy(project, thread)
     );
     const result = this.paginate(candidates, page);
     return this.buildPickerResult(
@@ -531,7 +702,7 @@ export class MonitorManagementCoordinator {
     }
     const candidates = this.paginate(
       this.store.listMonitorThreads(project.projectKey).filter(
-        (thread) => !thread.selected && Boolean(thread.pausedDiscordChannelId) && !this.store.getThreadBridge(thread.threadId)
+        (thread) => this.isCleanableDiscordCopy(project, thread)
       ),
       page
     ).items;
@@ -656,6 +827,19 @@ export class MonitorManagementCoordinator {
       return [threadId, thread?.selected, thread?.pausedDiscordChannelId, thread?.updatedAt, active];
     });
     return createHash("sha256").update(JSON.stringify(state)).digest("hex");
+  }
+
+  private isCleanableDiscordCopy(
+    project: MonitorProjectRecord,
+    thread: MonitorThreadRecord
+  ): boolean {
+    if (project.enabled && thread.selected) {
+      return false;
+    }
+    return Boolean(
+      thread.pausedDiscordChannelId ||
+      this.store.getThreadBridge(thread.threadId)
+    );
   }
 
   private parseCustomId(customId: string): string[] {

@@ -43,6 +43,8 @@ const DESKTOP_OWNER_RECOVERY_TIMEOUT_MS = 8_000;
 const STEER_ACTIVE_TURN_RETRY_DELAYS_MS = [250, 750, 1_500, 2_500];
 const DISCORD_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const DISCORD_IMAGE_HOSTS = new Set(["cdn.discordapp.com", "media.discordapp.net"]);
+const DESKTOP_DISCONNECTED_WRITE_BACK_MESSAGE =
+  "Codex 已断线，消息未发送，也没有加入队列。请在 Codex 重新连接后重新发送。";
 
 class DesktopOriginalThreadUnavailableError extends Error {}
 
@@ -468,7 +470,22 @@ export class ProviderCommandCoordinator {
           error = startError;
         }
       }
-      const errorMessage = this.formatErrorMessage(error, "Failed to steer queued Codex message.");
+      const desktopDisconnected = error instanceof DesktopOriginalThreadUnavailableError;
+      const errorMessage = desktopDisconnected
+        ? DESKTOP_DISCONNECTED_WRITE_BACK_MESSAGE
+        : this.formatErrorMessage(error, "Failed to steer queued Codex message.");
+      if (desktopDisconnected) {
+        this.context.stateStore.markWriteBackQueueItemFailed(claimed.id, errorMessage);
+        this.appendWriteBackCanonicalEvent(
+          { ...claimed, status: "failed", error: errorMessage },
+          "writeBackFailed",
+          errorMessage
+        );
+        return {
+          content: errorMessage,
+          ephemeral: true
+        };
+      }
       this.context.stateStore.restoreWriteBackQueueItemPending(claimed.id, errorMessage);
       this.appendWriteBackCanonicalEvent(
         {
@@ -536,16 +553,23 @@ export class ProviderCommandCoordinator {
     } catch (error) {
       const errorMessage = this.formatErrorMessage(error, "Failed to start Codex turn from queued Discord message.");
       if (error instanceof DesktopOriginalThreadUnavailableError) {
-        this.context.stateStore.restoreWriteBackQueueItemPending(claimed.id, errorMessage);
+        this.context.stateStore.markWriteBackQueueItemFailed(
+          claimed.id,
+          DESKTOP_DISCONNECTED_WRITE_BACK_MESSAGE
+        );
         this.appendWriteBackCanonicalEvent(
-          { ...claimed, status: "pending", error: errorMessage },
+          {
+            ...claimed,
+            status: "failed",
+            error: DESKTOP_DISCONNECTED_WRITE_BACK_MESSAGE
+          },
           "writeBackFailed",
-          errorMessage
+          DESKTOP_DISCONNECTED_WRITE_BACK_MESSAGE
         );
         return this.context.stateStore.getWriteBackQueueItem(claimed.id) ?? {
           ...claimed,
-          status: "pending",
-          error: errorMessage
+          status: "failed",
+          error: DESKTOP_DISCONNECTED_WRITE_BACK_MESSAGE
         };
       }
       this.context.stateStore.markWriteBackQueueItemFailed(claimed.id, errorMessage);
@@ -572,6 +596,16 @@ export class ProviderCommandCoordinator {
     trimmedText: string,
     options: QueueWriteBackOptions = {}
   ): Promise<DiscordCommandResult> {
+    if (
+      options.sourceKind === "plain" &&
+      (await this.isOriginalDesktopDisconnected(bridge))
+    ) {
+      return {
+        content: DESKTOP_DISCONNECTED_WRITE_BACK_MESSAGE,
+        ephemeral: true
+      };
+    }
+
     const pendingBefore = this.context.stateStore.countPendingWriteBackQueueItems(bridge.codexThreadId);
     if (pendingBefore >= WRITE_BACK_MAX_PENDING_PER_THREAD) {
       return {
@@ -608,13 +642,6 @@ export class ProviderCommandCoordinator {
         return {
           content: sent.error ?? "Failed to start Codex turn from your message.",
           ephemeral: true
-        };
-      }
-      if (sent?.id === queued.id && sent.status === "pending" && sent.error) {
-        return {
-          content: `原桌面对话暂时不可用，消息已保留在队列中。\n${sent.error}`,
-          ephemeral: true,
-          buttons: this.buildWriteBackButtons(queued, false, options.plainMode === true)
         };
       }
     }
@@ -1551,6 +1578,10 @@ export class ProviderCommandCoordinator {
     options: WriteBackTurnStartOptions = {}
   ): Promise<void> {
     const { threadId, text } = record;
+    const mobileExecutionPolicy = {
+      approvalPolicy: "never" as const,
+      sandboxPolicy: { type: "dangerFullAccess" as const }
+    };
     const sourceKind =
       this.runtime.threadState.get(threadId)?.sourceKind ??
       this.context.stateStore.getThreadBridge(threadId)?.sourceKind ??
@@ -1559,7 +1590,8 @@ export class ProviderCommandCoordinator {
       await this.context.codexAdapter.startTurn(threadId, text, {
         model: record.requestedModel,
         reasoningEffort: record.requestedReasoningEffort,
-        localImagePaths: record.localImagePaths
+        localImagePaths: record.localImagePaths,
+        ...mobileExecutionPolicy
       });
       return;
     }
@@ -1583,7 +1615,8 @@ export class ProviderCommandCoordinator {
         input: this.buildWriteBackInput(text, record.localImagePaths),
         attachments: [],
         ...(record.requestedModel ? { model: record.requestedModel } : {}),
-        ...(record.requestedReasoningEffort ? { reasoningEffort: record.requestedReasoningEffort } : {})
+        ...(record.requestedReasoningEffort ? { reasoningEffort: record.requestedReasoningEffort } : {}),
+        ...mobileExecutionPolicy
       };
       try {
         await desktopIpcClient.startTurn(threadId, turnStartParams);
@@ -1616,7 +1649,8 @@ export class ProviderCommandCoordinator {
       await this.context.codexAdapter.startTurn(threadId, text, {
         model: record.requestedModel,
         reasoningEffort: record.requestedReasoningEffort,
-        localImagePaths: record.localImagePaths
+        localImagePaths: record.localImagePaths,
+        ...mobileExecutionPolicy
       });
       return;
     }
@@ -1631,7 +1665,8 @@ export class ProviderCommandCoordinator {
     await this.context.codexAdapter.startTurn(threadId, text, {
       model: record.requestedModel,
       reasoningEffort: record.requestedReasoningEffort,
-      localImagePaths: record.localImagePaths
+      localImagePaths: record.localImagePaths,
+      ...mobileExecutionPolicy
     });
   }
 
@@ -1661,6 +1696,37 @@ export class ProviderCommandCoordinator {
       );
     }
     return desktopIpcClient.canStartTurnInDesktopThread(threadId);
+  }
+
+  private async isOriginalDesktopDisconnected(bridge: ThreadBridgeRecord): Promise<boolean> {
+    const sourceKind =
+      this.runtime.threadState.get(bridge.codexThreadId)?.sourceKind ??
+      bridge.sourceKind ??
+      "app-server";
+    if (sourceKind === "cli-session") {
+      return false;
+    }
+    if (
+      sourceKind === "app-server" &&
+      (await this.isBridgeRemoteCliThread(bridge.codexThreadId))
+    ) {
+      return false;
+    }
+
+    const desktopIpcClient = this.context.desktopIpcClient;
+    if (
+      !desktopIpcClient ||
+      typeof desktopIpcClient.isReady !== "function" ||
+      !desktopIpcClient.isReady()
+    ) {
+      return true;
+    }
+    const availabilityCheck = (
+      desktopIpcClient as typeof desktopIpcClient & { isDesktopAvailable?: () => boolean }
+    ).isDesktopAvailable;
+    return typeof availabilityCheck === "function"
+      ? !availabilityCheck.call(desktopIpcClient)
+      : false;
   }
 
   private isNoClientFoundError(error: unknown): boolean {
